@@ -402,7 +402,7 @@ private fun CameraScanner(
             },
             modifier = Modifier.padding(14.dp)
         ) {
-            Icon(Icons.Default.CameraAlt, contentDescription = null)
+            Text("📷")
             Spacer(Modifier.width(8.dp))
             Text("Scan game cover")
         }
