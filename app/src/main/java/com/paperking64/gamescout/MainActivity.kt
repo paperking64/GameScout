@@ -33,6 +33,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.barcode.Barcode
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.File
@@ -110,6 +113,13 @@ private fun GameScoutScreen() {
                             } else {
                                 "Text detected. Check the title before searching."
                             }
+                        },
+                        onBarcodeDetected = { code ->
+                            query = code
+                            pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
+                                URLEncoder.encode(code, "UTF-8")
+                            status = "Barcode detected. Opening PriceCharting search..."
+                            sheetOpen = true
                         },
                         onStatus = { status = it }
                     )
@@ -222,6 +232,7 @@ private fun GameScoutScreen() {
 private fun CameraScanner(
     modifier: Modifier,
     onRecognized: (String) -> Unit,
+    onBarcodeDetected: (String) -> Unit,
     onStatus: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -280,20 +291,29 @@ private fun CameraScanner(
                                 }
 
                                 val input = InputImage.fromBitmap(bitmap, 0)
-                                TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                                    .process(input)
-                                    .addOnSuccessListener { result ->
-                                        val detected = result.textBlocks
-                                            .flatMap { block -> block.lines }
-                                            .map { line -> line.text }
-                                            .sortedByDescending { line -> line.length }
-                                            .take(5)
-                                            .joinToString(" ")
-                                            .take(120)
-                                        onRecognized(detected)
+                                val barcodeOptions = BarcodeScannerOptions.Builder()
+                                    .setBarcodeFormats(
+                                        Barcode.FORMAT_UPC_A,
+                                        Barcode.FORMAT_UPC_E,
+                                        Barcode.FORMAT_EAN_13,
+                                        Barcode.FORMAT_EAN_8
+                                    )
+                                    .build()
+                                val barcodeScanner = BarcodeScanning.getClient(barcodeOptions)
+                                barcodeScanner.process(input)
+                                    .addOnSuccessListener { barcodes ->
+                                        val code = barcodes.firstNotNullOfOrNull { it.rawValue }
+                                        if (!code.isNullOrBlank()) {
+                                            onBarcodeDetected(code)
+                                        } else {
+                                            recognizeCoverText(input, onRecognized, onStatus)
+                                        }
                                     }
                                     .addOnFailureListener {
-                                        onStatus("Text recognition failed. Try another photo.")
+                                        recognizeCoverText(input, onRecognized, onStatus)
+                                    }
+                                    .addOnCompleteListener {
+                                        barcodeScanner.close()
                                     }
                             }
 
@@ -311,4 +331,27 @@ private fun CameraScanner(
             Text("Scan game cover")
         }
     }
+}
+
+
+private fun recognizeCoverText(
+    input: InputImage,
+    onRecognized: (String) -> Unit,
+    onStatus: (String) -> Unit
+) {
+    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        .process(input)
+        .addOnSuccessListener { result ->
+            val detected = result.textBlocks
+                .flatMap { block -> block.lines }
+                .map { line -> line.text }
+                .sortedByDescending { line -> line.length }
+                .take(5)
+                .joinToString(" ")
+                .take(120)
+            onRecognized(detected)
+        }
+        .addOnFailureListener {
+            onStatus("Barcode and text recognition failed. Try another photo.")
+        }
 }
