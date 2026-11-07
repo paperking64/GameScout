@@ -375,7 +375,7 @@ private fun CameraScanner(
                                             onBarcodeDetected(code)
                                         } else if (geminiApiKey.isNotBlank()) {
                                             onStatus("No barcode found. Identifying cover artwork...")
-                                            identifyGameCover(bitmap, geminiApiKey, onGameIdentified, onStatus)
+                                            identifyGameCover(context, bitmap, geminiApiKey, onGameIdentified, onStatus)
                                         } else {
                                             onStatus("No barcode found. Add a Gemini API key in Settings for cover-art recognition.")
                                         }
@@ -410,6 +410,7 @@ private fun CameraScanner(
 }
 
 private fun identifyGameCover(
+    context: Context,
     originalBitmap: Bitmap,
     apiKey: String,
     onIdentified: (String) -> Unit,
@@ -507,24 +508,17 @@ private fun identifyGameCover(
             }
 
             val searchText = if (platform.isNotBlank()) "$title $platform" else title
-            ContextCompat.getMainExecutor(AppContextHolder.context ?: return@Thread).execute {
+            ContextCompat.getMainExecutor(context).execute {
                 onIdentified(searchText)
             }
         } catch (exception: Exception) {
             val message = exception.message ?: "Cover-art recognition failed. Try again."
-            val appContext = AppContextHolder.context
-            if (appContext != null) {
-                ContextCompat.getMainExecutor(appContext).execute {
-                    onStatus(message)
-                }
+            ContextCompat.getMainExecutor(context).execute {
+                onStatus(message)
             }
         } finally {
             connection?.disconnect()
         }
     }.start()
-}
-
-private object AppContextHolder {
-    var context: Context? = null
 }
 
