@@ -457,11 +457,11 @@ private fun identifyGameCover(
             val requestBody = JSONObject()
                 .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
                 .put("generationConfig", JSONObject()
-                    .put("temperature", 0.1)
-                    .put("responseMimeType", "application/json"))
+                    .put("responseMimeType", "application/json")
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "low")) )
 
             val endpoint = URL(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
             )
             connection = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
