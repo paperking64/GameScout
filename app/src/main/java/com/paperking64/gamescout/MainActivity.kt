@@ -1,8 +1,11 @@
 package com.paperking64.gamescout
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.util.Base64
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,10 +40,15 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.net.URLEncoder
+
+private const val PREFS_NAME = "gamescout_settings"
+private const val PREF_GEMINI_KEY = "gemini_api_key"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +61,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun GameScoutScreen() {
     val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    var apiKey by remember { mutableStateOf(preferences.getString(PREF_GEMINI_KEY, "") ?: "") }
+    var apiKeyDraft by remember { mutableStateOf(apiKey) }
+    var settingsOpen by remember { mutableStateOf(false) }
     var cameraGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -68,6 +81,13 @@ private fun GameScoutScreen() {
     ) { granted ->
         cameraGranted = granted
         if (!granted) status = "Camera permission is required to scan covers."
+    }
+
+    fun openPriceCharting(search: String) {
+        query = search
+        pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
+            URLEncoder.encode(search, "UTF-8")
+        sheetOpen = true
     }
 
     MaterialTheme(
@@ -87,14 +107,23 @@ private fun GameScoutScreen() {
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         "GameScout",
                         style = MaterialTheme.typography.headlineMedium,
                         color = Color.White
                     )
-                    Text("BETA", color = Color(0xFFB388FF))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("BETA", color = Color(0xFFB388FF))
+                        IconButton(onClick = {
+                            apiKeyDraft = apiKey
+                            settingsOpen = true
+                        }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -106,20 +135,14 @@ private fun GameScoutScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        onRecognized = { detected ->
-                            query = detected
-                            status = if (detected.isBlank()) {
-                                "No clear title found. Try again or search manually."
-                            } else {
-                                "Text detected. Check the title before searching."
-                            }
+                        geminiApiKey = apiKey,
+                        onGameIdentified = { titleAndPlatform ->
+                            status = "Identified: $titleAndPlatform"
+                            openPriceCharting(titleAndPlatform)
                         },
                         onBarcodeDetected = { code ->
-                            query = code
-                            pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
-                                URLEncoder.encode(code, "UTF-8")
-                            status = "Barcode detected. Opening PriceCharting search..."
-                            sheetOpen = true
+                            status = "Barcode detected. Opening PriceCharting..."
+                            openPriceCharting(code)
                         },
                         onStatus = { status = it }
                     )
@@ -152,11 +175,7 @@ private fun GameScoutScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
-                            if (query.isNotBlank()) {
-                                pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
-                                    URLEncoder.encode(query, "UTF-8")
-                                sheetOpen = true
-                            }
+                            if (query.isNotBlank()) openPriceCharting(query)
                         },
                         modifier = Modifier.weight(1f)
                     ) {
@@ -174,11 +193,59 @@ private fun GameScoutScreen() {
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Prototype: on-device text recognition reads cover text. Confirm the title before searching.",
+                    if (apiKey.isBlank()) {
+                        "Add a Gemini API key in Settings to identify cover artwork. Barcode scanning works without it."
+                    } else {
+                        "Barcode scanning runs first. If no barcode is found, Gemini identifies the cover artwork."
+                    },
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+
+        if (settingsOpen) {
+            AlertDialog(
+                onDismissRequest = { settingsOpen = false },
+                title = { Text("GameScout settings") },
+                text = {
+                    Column {
+                        Text(
+                            "Gemini API key",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = apiKeyDraft,
+                            onValueChange = { apiKeyDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Paste your API key") },
+                            singleLine = true
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "The key is saved privately on this device. Do not share this test APK with your key entered. For a public release, the API call should move behind a protected backend.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        apiKey = apiKeyDraft.trim()
+                        preferences.edit().putString(PREF_GEMINI_KEY, apiKey).apply()
+                        settingsOpen = false
+                        status = if (apiKey.isBlank()) {
+                            "Gemini key removed. Barcode scanning is still available."
+                        } else {
+                            "Gemini key saved. Ready to identify game covers."
+                        }
+                    }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { settingsOpen = false }) { Text("Cancel") }
+                }
+            )
         }
 
         if (sheetOpen) {
@@ -231,7 +298,8 @@ private fun GameScoutScreen() {
 @Composable
 private fun CameraScanner(
     modifier: Modifier,
-    onRecognized: (String) -> Unit,
+    geminiApiKey: String,
+    onGameIdentified: (String) -> Unit,
     onBarcodeDetected: (String) -> Unit,
     onStatus: (String) -> Unit
 ) {
@@ -305,12 +373,20 @@ private fun CameraScanner(
                                         val code = barcodes.firstNotNullOfOrNull { it.rawValue }
                                         if (!code.isNullOrBlank()) {
                                             onBarcodeDetected(code)
+                                        } else if (geminiApiKey.isNotBlank()) {
+                                            onStatus("No barcode found. Identifying cover artwork...")
+                                            identifyGameCover(bitmap, geminiApiKey, onGameIdentified, onStatus)
                                         } else {
-                                            recognizeCoverText(input, onRecognized, onStatus)
+                                            onStatus("No barcode found. Add a Gemini API key in Settings for cover-art recognition.")
                                         }
                                     }
                                     .addOnFailureListener {
-                                        recognizeCoverText(input, onRecognized, onStatus)
+                                        if (geminiApiKey.isNotBlank()) {
+                                            onStatus("Barcode scan unavailable. Identifying cover artwork...")
+                                            identifyGameCover(bitmap, geminiApiKey, onGameIdentified, onStatus)
+                                        } else {
+                                            onStatus("Barcode scan failed. Add a Gemini API key for cover-art recognition.")
+                                        }
                                     }
                                     .addOnCompleteListener {
                                         barcodeScanner.close()
@@ -333,25 +409,122 @@ private fun CameraScanner(
     }
 }
 
-
-private fun recognizeCoverText(
-    input: InputImage,
-    onRecognized: (String) -> Unit,
+private fun identifyGameCover(
+    originalBitmap: Bitmap,
+    apiKey: String,
+    onIdentified: (String) -> Unit,
     onStatus: (String) -> Unit
 ) {
-    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        .process(input)
-        .addOnSuccessListener { result ->
-            val detected = result.textBlocks
-                .flatMap { block -> block.lines }
-                .map { line -> line.text }
-                .sortedByDescending { line -> line.length }
-                .take(5)
-                .joinToString(" ")
-                .take(120)
-            onRecognized(detected)
+    Thread {
+        var connection: HttpURLConnection? = null
+        try {
+            val maxDimension = 1280
+            val scale = minOf(
+                1.0,
+                maxDimension.toDouble() / maxOf(originalBitmap.width, originalBitmap.height)
+            )
+            val bitmap = if (scale < 1.0) {
+                Bitmap.createScaledBitmap(
+                    originalBitmap,
+                    (originalBitmap.width * scale).toInt(),
+                    (originalBitmap.height * scale).toInt(),
+                    true
+                )
+            } else originalBitmap
+
+            val imageOutput = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, imageOutput)
+            val imageBase64 = Base64.encodeToString(imageOutput.toByteArray(), Base64.NO_WRAP)
+
+            val prompt = """
+                Identify the video game shown by the FRONT COVER ART in this photo.
+                Use the artwork and the main game title, not publisher logos, console branding,
+                review quotes, stickers, rating symbols, spine text, or other incidental text.
+                Return the official game title and platform when you can identify them.
+                If the image is not a recognizable video game front cover, or you cannot confidently
+                identify the game, return an empty title. Do not guess.
+                Respond with JSON only, exactly this shape:
+                {"title":"game title or empty string","platform":"platform or empty string","confidence":0.0}
+                Confidence must be a number from 0 to 1.
+            """.trimIndent()
+
+            val parts = org.json.JSONArray()
+                .put(JSONObject().put("inline_data", JSONObject()
+                    .put("mime_type", "image/jpeg")
+                    .put("data", imageBase64)))
+                .put(JSONObject().put("text", prompt))
+            val requestBody = JSONObject()
+                .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
+                .put("generationConfig", JSONObject()
+                    .put("temperature", 0.1)
+                    .put("responseMimeType", "application/json"))
+
+            val endpoint = URL(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+            )
+            connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 20000
+                readTimeout = 45000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("x-goog-api-key", apiKey)
+            }
+            connection.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
+
+            val responseCode = connection.responseCode
+            val responseText = (if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            })?.bufferedReader()?.use { it.readText() }.orEmpty()
+
+            if (responseCode !in 200..299) {
+                throw IllegalStateException(
+                    when (responseCode) {
+                        400, 403 -> "Gemini rejected the API key or request. Check the key in Settings."
+                        429 -> "Gemini request limit reached. Wait a moment and try again."
+                        else -> "Gemini could not identify this cover (HTTP $responseCode)."
+                    }
+                )
+            }
+
+            val responseJson = JSONObject(responseText)
+            val candidateText = responseJson
+                .getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+            val result = JSONObject(candidateText)
+            val title = result.optString("title").trim()
+            val platform = result.optString("platform").trim()
+            val confidence = result.optDouble("confidence", 0.0)
+
+            if (title.isBlank() || confidence < 0.55) {
+                throw IllegalStateException("Couldn't confidently identify that cover. Try a clearer, straight-on photo.")
+            }
+
+            val searchText = if (platform.isNotBlank()) "$title $platform" else title
+            ContextCompat.getMainExecutor(AppContextHolder.context ?: return@Thread).execute {
+                onIdentified(searchText)
+            }
+        } catch (exception: Exception) {
+            val message = exception.message ?: "Cover-art recognition failed. Try again."
+            val appContext = AppContextHolder.context
+            if (appContext != null) {
+                ContextCompat.getMainExecutor(appContext).execute {
+                    onStatus(message)
+                }
+            }
+        } finally {
+            connection?.disconnect()
         }
-        .addOnFailureListener {
-            onStatus("Barcode and text recognition failed. Try another photo.")
-        }
+    }.start()
 }
+
+private object AppContextHolder {
+    var context: Context? = null
+}
+
