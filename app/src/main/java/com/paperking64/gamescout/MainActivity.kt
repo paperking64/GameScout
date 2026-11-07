@@ -383,7 +383,7 @@ private fun CameraScanner(
                                     .addOnFailureListener {
                                         if (geminiApiKey.isNotBlank()) {
                                             onStatus("Barcode scan unavailable. Identifying cover artwork...")
-                                            identifyGameCover(bitmap, geminiApiKey, onGameIdentified, onStatus)
+                                            identifyGameCover(context, bitmap, geminiApiKey, onGameIdentified, onStatus)
                                         } else {
                                             onStatus("Barcode scan failed. Add a Gemini API key for cover-art recognition.")
                                         }
