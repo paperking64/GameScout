@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -130,6 +131,13 @@ private fun GameScoutScreen() {
         sheetOpen = true
     }
 
+    fun onConsoleMatch(match: ConsoleMatch) {
+        isScanning = false
+        status = "Identified console: ${match.searchTerm}" +
+            if (match.details.isNotBlank()) " · ${match.details}" else ""
+        openPriceCharting(match.searchTerm)
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { imageUri: Uri? ->
@@ -149,11 +157,7 @@ private fun GameScoutScreen() {
                         context,
                         bitmap,
                         apiKey,
-                        onIdentified = { hardware ->
-                            isScanning = false
-                            status = "Identified console: $hardware"
-                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
-                        },
+                        onIdentified = { match -> onConsoleMatch(match) },
                         onStatus = {
                             isScanning = false
                             status = it
@@ -259,8 +263,9 @@ private fun GameScoutScreen() {
         }
         identifyConsoleHardware(
             context, bitmap, apiKey,
-            onIdentified = { actual ->
-                val normalized = normalizeForTest(actual)
+            onIdentified = { match ->
+                val actual = match.searchTerm + if (match.details.isNotBlank()) " · ${match.details}" else ""
+                val normalized = normalizeForTest(match.searchTerm)
                 val passed = test.expectedAliases.any { alias -> normalized.contains(normalizeForTest(alias)) }
                 runHardwareTest(
                     index + 1,
@@ -280,59 +285,78 @@ private fun GameScoutScreen() {
             surface = Color(0xFF1B1B22)
         )
     ) {
-        Scaffold(containerColor = Color(0xFF101014)) { padding ->
+        Scaffold(
+            containerColor = Color(0xFF101014),
+            topBar = {
+                // Header and Games / Consoles tabs live outside the scrolling content,
+                // drawn above it on an opaque background, so the camera preview can
+                // never scroll or draw over them. Insets keep them clear of the status
+                // bar and the phone's front-camera cutout.
+                Surface(color = Color(0xFF101014)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(
+                                WindowInsets.statusBars.union(WindowInsets.displayCutout)
+                                    .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                            )
+                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "GameScout",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = Color.White
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("BETA", color = Color(0xFFB388FF))
+                                IconButton(onClick = {
+                                    apiKeyDraft = apiKey
+                                    settingsOpen = true
+                                }) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("Games", "Consoles").forEach { mode ->
+                                val selected = scanMode == mode
+                                if (selected) {
+                                    Button(
+                                        onClick = { scanMode = mode },
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                                        enabled = !isScanning
+                                    ) { Text(mode) }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { scanMode = mode },
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                                        enabled = !isScanning
+                                    ) { Text(mode) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ) { padding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .clipToBounds()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "GameScout",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("BETA", color = Color(0xFFB388FF))
-                        IconButton(onClick = {
-                            apiKeyDraft = apiKey
-                            settingsOpen = true
-                        }) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("Games", "Consoles").forEach { mode ->
-                        val selected = scanMode == mode
-                        if (selected) {
-                            Button(
-                                onClick = { scanMode = mode },
-                                modifier = Modifier.weight(1f),
-                                enabled = !isScanning
-                            ) { Text(mode) }
-                        } else {
-                            OutlinedButton(
-                                onClick = { scanMode = mode },
-                                modifier = Modifier.weight(1f),
-                                enabled = !isScanning
-                            ) { Text(mode) }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
                 Text(
                     status,
                     color = Color.LightGray,
@@ -343,17 +367,11 @@ private fun GameScoutScreen() {
 
                 if (cameraGranted && scanMode == "Games") {
                     CameraScanner(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(270.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         scanMode = scanMode,
                         geminiApiKey = apiKey,
                         onScanningChanged = { isScanning = it },
-                        onConsoleIdentified = { hardware ->
-                            isScanning = false
-                            status = "Identified console: $hardware"
-                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
-                        },
+                        onConsoleIdentified = { match -> onConsoleMatch(match) },
                         onGameIdentified = { titleAndPlatform ->
                             isScanning = false
                             status = "Identified: $titleAndPlatform"
@@ -427,17 +445,11 @@ private fun GameScoutScreen() {
                 } else if (scanMode == "Consoles") {
                     if (cameraGranted) {
                         CameraScanner(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(270.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             scanMode = scanMode,
                             geminiApiKey = apiKey,
                             onScanningChanged = { isScanning = it },
-                            onConsoleIdentified = { hardware ->
-                                isScanning = false
-                                status = "Identified console: $hardware"
-                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
-                            },
+                            onConsoleIdentified = { match -> onConsoleMatch(match) },
                             onGameIdentified = { titleAndPlatform ->
                                 isScanning = false
                                 status = "Identified: $titleAndPlatform"
@@ -708,7 +720,7 @@ private fun CameraScanner(
     scanMode: String,
     geminiApiKey: String,
     onScanningChanged: (Boolean) -> Unit,
-    onConsoleIdentified: (String) -> Unit,
+    onConsoleIdentified: (ConsoleMatch) -> Unit,
     onGameIdentified: (String) -> Unit,
     onBarcodeDetected: (String) -> Unit,
     onStatus: (String) -> Unit
@@ -725,9 +737,13 @@ private fun CameraScanner(
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp),
+                .height(190.dp)
+                .clipToBounds(),
             factory = { ctx ->
                 PreviewView(ctx).also { previewView ->
+                    // FILL_CENTER scales the preview beyond the view; keep it inside its box.
+                    previewView.clipToOutline = true
+                    previewView.clipChildren = true
                     // TextureView avoids the camera SurfaceView drawing over Compose
                     // controls such as the Games / Consoles selector.
                     previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -944,11 +960,14 @@ private data class HardwareTestCase(
     val expectedAliases: List<String>
 )
 
+/** A console identification: [searchTerm] goes to PriceCharting, [details] is shown in the status line only. */
+internal data class ConsoleMatch(val searchTerm: String, val details: String)
+
 private fun identifyConsoleHardware(
     context: Context,
     originalBitmap: Bitmap,
     apiKey: String,
-    onIdentified: (String) -> Unit,
+    onIdentified: (ConsoleMatch) -> Unit,
     onStatus: (String) -> Unit
 ) {
     Thread {
@@ -965,59 +984,57 @@ private fun identifyConsoleHardware(
                 IMPORTANT: Identify the exact visible VARIANT, not just the product family.
                 Treat shell colorways as meaningful variants when the manufacturer gave them
                 distinct names. For example, a Nintendo GameCube can be Indigo, Jet Black,
-                or Spice Orange. If the shell is orange, report variant "Spice Orange", not
-                merely "orange"; if purple/indigo, report "Indigo". Apply the same care to
+                Platinum, or Spice Orange. If the shell is orange, report variant "Spice Orange",
+                not merely "orange"; if purple/indigo, report "Indigo". Apply the same care to
                 other systems with named colorways, special editions, and hardware revisions.
-                Keep the base product in "model" (for example, "GameCube") and put its named
-                colorway in "variant". Put the observed plain color in "color". Use "edition"
-                for a special themed edition, and "revision" for a hardware revision/model
-                number such as AGS-101, SCPH-70000, or New Nintendo 3DS XL when supported.
-                Do not confuse a color with a hardware revision or special edition.
+
+                Field rules:
+                - "manufacturer": company only, e.g. "Nintendo", "Sony", "Sega".
+                - "family": the retail product name collectors use, e.g. "GameCube",
+                  "Game Boy Advance SP", "PlayStation 2 Slim", "New Nintendo 3DS XL".
+                  Never put a model number or color here.
+                - "variant": the official colorway name only, e.g. "Indigo", "Spice Orange".
+                - "color": the plain observed color, e.g. "purple".
+                - "edition": a special themed/limited edition only. Leave empty for a
+                  normal retail unit; never write "Standard" or "Regular".
+                - "revision": a hardware model number such as DOL-001, AGS-101, SCPH-70001.
+                Use an empty string "" for anything unknown or not applicable. Never use null.
 
                 Be conservative: infer a named colorway only when the visible shell color and
                 design support it. Lighting, reflections, filters, and white balance can alter
-                appearance. If exact colorway cannot be distinguished, set variant to
-                "Unknown" and lower variant_confidence. Never invent a limited edition or
-                revision. Identify the broad family even if the variant is uncertain.
+                appearance. If exact colorway cannot be distinguished, leave variant empty and
+                lower variant_confidence. Never invent a limited edition or revision. Identify
+                the broad family even if the variant is uncertain.
 
                 Return JSON only:
-                {"manufacturer":"...","family":"...","model":"...","variant":"...","color":"...","edition":"...","revision":"...","form_factor":"...","visible_features":"...","confidence":0.0,"variant_confidence":0.0}
+                {"manufacturer":"...","family":"...","variant":"...","color":"...","edition":"...","revision":"...","form_factor":"...","visible_features":"...","confidence":0.0,"variant_confidence":0.0}
             """.trimIndent()
             val parts = org.json.JSONArray()
                 .put(JSONObject().put("text", prompt))
                 .put(imagePart(image))
             val response = callGemini(apiKey, parts, 240)
             val result = extractGeminiJson(response)
-            val manufacturer = result.optString("manufacturer").trim()
-            val family = result.optString("family").trim()
-            val model = result.optString("model").trim()
-            val variant = result.optString("variant").trim().takeUnless {
-                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
-            }.orEmpty()
-            val color = result.optString("color").trim()
-            val edition = result.optString("edition").trim().takeUnless {
-                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
-            }.orEmpty()
-            val revision = result.optString("revision").trim().takeUnless {
-                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
-            }.orEmpty()
-            val features = result.optString("visible_features").trim()
+            fun field(name: String) = cleanConsoleField(
+                if (result.isNull(name)) "" else result.optString(name)
+            )
             val confidence = result.optDouble("confidence", 0.0)
             val variantConfidence = result.optDouble("variant_confidence", 0.0)
+            val family = field("family").ifBlank { field("model") }
             if (family.isBlank() || confidence < 0.15) {
                 throw IllegalStateException("Couldn't confidently identify this hardware. Try another angle.")
             }
-            val details = mutableListOf<String>()
-            if (variant.isNotBlank() && variantConfidence >= 0.35) details += variant
-            else if (color.isNotBlank()) details += color
-            if (edition.isNotBlank()) details += edition
-            if (revision.isNotBlank()) details += revision
-            val identity = (listOf(manufacturer, family, model) + details)
-                .filter { it.isNotBlank() }.distinct().joinToString(" ")
-            val actual = identity +
-                " (confidence ${(confidence * 100).toInt()}%, variant confidence ${(variantConfidence * 100).toInt()}%)" +
-                if (features.isNotBlank()) " · $features" else ""
-            ContextCompat.getMainExecutor(context).execute { onIdentified(actual) }
+            val searchTerm = buildConsoleSearchTerm(
+                manufacturer = field("manufacturer"),
+                family = family,
+                variant = field("variant").takeIf { variantConfidence >= 0.35 }.orEmpty(),
+                color = field("color"),
+                edition = field("edition")
+            )
+            val details = listOfNotNull(
+                field("revision").takeIf { it.isNotBlank() },
+                "confidence ${(confidence * 100).toInt()}%, variant ${(variantConfidence * 100).toInt()}%"
+            ).joinToString(" · ")
+            ContextCompat.getMainExecutor(context).execute { onIdentified(ConsoleMatch(searchTerm, details)) }
         } catch (_: java.net.SocketTimeoutException) {
             ContextCompat.getMainExecutor(context).execute {
                 onStatus("Gemini timed out. Check the connection and retry.")
@@ -1027,6 +1044,58 @@ private fun identifyConsoleHardware(
             ContextCompat.getMainExecutor(context).execute { onStatus(message) }
         }
     }.start()
+}
+
+// ---- Console search terms -------------------------------------------------
+// PriceCharting search works best with "<Manufacturer> <Product> <Colorway>",
+// e.g. "Nintendo GameCube Indigo". Model numbers, "Standard", and null/unknown
+// placeholders only make results inconsistent, so they never reach the query.
+
+private val PLACEHOLDER_VALUES = setOf(
+    "", "null", "none", "unknown", "n/a", "na", "not applicable", "not visible",
+    "standard", "standard edition", "regular", "normal", "default", "base", "original", "retail"
+)
+
+/** Hardware model numbers like DOL-001, AGS-101, SCPH-70001, CUH-1215A, HAC-001(-01). */
+private val HARDWARE_CODE = Regex("""\b[A-Z]{2,5}-?\d{3,6}[A-Z]?(-\d{2})?\b""")
+
+internal fun cleanConsoleField(raw: String): String {
+    val withoutCodes = raw.replace(HARDWARE_CODE, " ")
+        .replace(Regex("""[()\[\]]"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim(' ', ',', '-', '/', '·')
+    return if (withoutCodes.lowercase() in PLACEHOLDER_VALUES) "" else withoutCodes
+}
+
+private fun titleCase(value: String): String =
+    value.split(" ").joinToString(" ") { word ->
+        if (word.any { it.isUpperCase() }) word else word.replaceFirstChar { it.uppercase() }
+    }
+
+internal fun buildConsoleSearchTerm(
+    manufacturer: String,
+    family: String,
+    variant: String,
+    color: String,
+    edition: String
+): String {
+    val words = mutableListOf<String>()
+    fun addPhrase(phrase: String) {
+        // Skip any word already present (case-insensitive), so "Nintendo" +
+        // "Nintendo GameCube" + "GameCube Indigo" becomes "Nintendo GameCube Indigo".
+        phrase.split(" ").filter { it.isNotBlank() }.forEach { word ->
+            if (words.none { it.equals(word, ignoreCase = true) }) words += word
+        }
+    }
+    val cleanManufacturer = cleanConsoleField(manufacturer)
+    val cleanFamily = cleanConsoleField(family)
+    // "New Nintendo 3DS XL" already names its maker; prefixing would reorder it.
+    if (!cleanFamily.contains(cleanManufacturer, ignoreCase = true)) addPhrase(cleanManufacturer)
+    addPhrase(cleanFamily)
+    val colorway = cleanConsoleField(variant).ifBlank { titleCase(cleanConsoleField(color)) }
+    addPhrase(colorway)
+    addPhrase(cleanConsoleField(edition))
+    return words.joinToString(" ")
 }
 
 private fun identifyGameCover(
