@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -337,6 +339,11 @@ private fun GameScoutScreen() {
                     onFromCurrencyChange = { fromCurrency = it },
                     toCurrency = toCurrency,
                     onToCurrencyChange = { toCurrency = it },
+                    onSwapCurrencies = {
+                        val previousFrom = fromCurrency
+                        fromCurrency = toCurrency
+                        toCurrency = previousFrom
+                    },
                     rates = currencyRates,
                     rateDate = currencyRateDate,
                     loading = currencyLoading,
@@ -480,17 +487,21 @@ private fun GameScoutScreen() {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .nestedScroll(rememberNestedScrollInteropConnection()),
                     factory = { ctx ->
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             webViewClient = WebViewClient()
-                            isNestedScrollingEnabled = true
+                            // Keep vertical gestures inside the PriceCharting WebView.
+                            // The Compose/View nested-scroll bridge above coordinates with the sheet.
                             setOnTouchListener { view, event ->
-                                when (event.action) {
-                                    MotionEvent.ACTION_MOVE -> view.parent?.requestDisallowInterceptTouchEvent(true)
-                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.parent?.requestDisallowInterceptTouchEvent(false)
+                                when (event.actionMasked) {
+                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                                        view.parent?.requestDisallowInterceptTouchEvent(false)
                                 }
                                 false
                             }
@@ -940,6 +951,7 @@ private fun CurrencyConverterCard(
     onFromCurrencyChange: (String) -> Unit,
     toCurrency: String,
     onToCurrencyChange: (String) -> Unit,
+    onSwapCurrencies: () -> Unit,
     rates: Map<String, Double>,
     rateDate: String,
     loading: Boolean,
@@ -1000,7 +1012,9 @@ private fun CurrencyConverterCard(
                     onSelected = onFromCurrencyChange,
                     modifier = Modifier.weight(1f)
                 )
-                Text("→", color = Color.LightGray)
+                IconButton(onClick = onSwapCurrencies) {
+                    Text("⇄", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                }
                 CurrencyPicker(
                     selected = toCurrency,
                     onSelected = onToCurrencyChange,
