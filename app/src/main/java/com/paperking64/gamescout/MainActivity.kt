@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.common.InputImage
@@ -75,6 +76,7 @@ private fun GameScoutScreen() {
     var status by remember { mutableStateOf("Point your camera at a game cover") }
     var query by remember { mutableStateOf("") }
     var sheetOpen by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(false) }
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -98,9 +100,11 @@ private fun GameScoutScreen() {
             if (apiKey.isBlank()) {
                 status = "Add your Gemini API key in Settings before identifying an uploaded image."
             } else {
+                isScanning = true
                 status = "Loading uploaded cover image..."
                 val bitmap = loadImageBitmap(context, imageUri)
                 if (bitmap == null) {
+                    isScanning = false
                     status = "Couldn't open that image. Please try another photo."
                 } else {
                     status = "Identifying uploaded cover artwork..."
@@ -109,10 +113,14 @@ private fun GameScoutScreen() {
                         bitmap,
                         apiKey,
                         onIdentified = { titleAndPlatform ->
+                            isScanning = false
                             status = "Identified: $titleAndPlatform"
                             openPriceCharting(titleAndPlatform)
                         },
-                        onStatus = { status = it }
+                        onStatus = {
+                            isScanning = false
+                            status = it
+                        }
                     )
                 }
             }
@@ -131,6 +139,7 @@ private fun GameScoutScreen() {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -163,13 +172,16 @@ private fun GameScoutScreen() {
                     CameraScanner(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .heightIn(min = 240.dp, max = 380.dp),
                         geminiApiKey = apiKey,
+                        onScanningChanged = { isScanning = it },
                         onGameIdentified = { titleAndPlatform ->
+                            isScanning = false
                             status = "Identified: $titleAndPlatform"
                             openPriceCharting(titleAndPlatform)
                         },
                         onBarcodeDetected = { code ->
+                            isScanning = false
                             status = "Barcode detected. Opening PriceCharting..."
                             openPriceCharting(code)
                         },
@@ -186,7 +198,7 @@ private fun GameScoutScreen() {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .height(300.dp)
                             .background(Color(0xFF24242D), RoundedCornerShape(20.dp)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -237,6 +249,34 @@ private fun GameScoutScreen() {
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+        }
+
+        if (isScanning) {
+            Dialog(onDismissRequest = {}) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF1B1B22),
+                    tonalElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 36.dp, vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        CircularProgressIndicator(color = Color(0xFFB388FF))
+                        Text(
+                            "Scanning",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White
+                        )
+                        Text(
+                            "Identifying game and searching PriceCharting...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.LightGray
+                        )
+                    }
+                }
             }
         }
 
@@ -335,6 +375,7 @@ private fun GameScoutScreen() {
 private fun CameraScanner(
     modifier: Modifier,
     geminiApiKey: String,
+    onScanningChanged: (Boolean) -> Unit,
     onGameIdentified: (String) -> Unit,
     onBarcodeDetected: (String) -> Unit,
     onStatus: (String) -> Unit
@@ -381,6 +422,7 @@ private fun CameraScanner(
                 if (capture == null) {
                     onStatus("Camera is starting. Try again in a moment.")
                 } else {
+                    onScanningChanged(true)
                     val photoFile = File(context.cacheDir, "gamescout-scan.jpg")
                     val output = ImageCapture.OutputFileOptions.Builder(photoFile).build()
                     capture.takePicture(
@@ -390,6 +432,7 @@ private fun CameraScanner(
                             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                 val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath)
                                 if (bitmap == null) {
+                                    onScanningChanged(false)
                                     onStatus("Could not read the captured photo.")
                                     return
                                 }
@@ -411,16 +454,42 @@ private fun CameraScanner(
                                             onBarcodeDetected(code)
                                         } else if (geminiApiKey.isNotBlank()) {
                                             onStatus("No barcode found. Identifying cover artwork...")
-                                            identifyGameCover(context, bitmap, geminiApiKey, onGameIdentified, onStatus)
+                                            identifyGameCover(
+                                                context,
+                                                bitmap,
+                                                geminiApiKey,
+                                                onIdentified = {
+                                                    onScanningChanged(false)
+                                                    onGameIdentified(it)
+                                                },
+                                                onStatus = {
+                                                    onScanningChanged(false)
+                                                    onStatus(it)
+                                                }
+                                            )
                                         } else {
+                                            onScanningChanged(false)
                                             onStatus("No barcode found. Add a Gemini API key in Settings for cover-art recognition.")
                                         }
                                     }
                                     .addOnFailureListener {
                                         if (geminiApiKey.isNotBlank()) {
                                             onStatus("Barcode scan unavailable. Identifying cover artwork...")
-                                            identifyGameCover(context, bitmap, geminiApiKey, onGameIdentified, onStatus)
+                                            identifyGameCover(
+                                                context,
+                                                bitmap,
+                                                geminiApiKey,
+                                                onIdentified = {
+                                                    onScanningChanged(false)
+                                                    onGameIdentified(it)
+                                                },
+                                                onStatus = {
+                                                    onScanningChanged(false)
+                                                    onStatus(it)
+                                                }
+                                            )
                                         } else {
+                                            onScanningChanged(false)
                                             onStatus("Barcode scan failed. Add a Gemini API key for cover-art recognition.")
                                         }
                                     }
@@ -430,6 +499,7 @@ private fun CameraScanner(
                             }
 
                             override fun onError(exception: ImageCaptureException) {
+                                onScanningChanged(false)
                                 onStatus("Photo capture failed. Try again.")
                             }
                         }
