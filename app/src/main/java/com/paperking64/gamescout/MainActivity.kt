@@ -84,6 +84,13 @@ private fun GameScoutScreen() {
         if (!granted) status = "Camera permission is required to scan covers."
     }
 
+    fun openPriceCharting(search: String) {
+        query = search
+        pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
+            URLEncoder.encode(search, "UTF-8")
+        sheetOpen = true
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { imageUri: Uri? ->
@@ -110,13 +117,6 @@ private fun GameScoutScreen() {
                 }
             }
         }
-    }
-
-    fun openPriceCharting(search: String) {
-        query = search
-        pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
-            URLEncoder.encode(search, "UTF-8")
-        sheetOpen = true
     }
 
     MaterialTheme(
