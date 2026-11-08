@@ -85,6 +85,7 @@ private fun GameScoutScreen() {
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
     var sampleTestResults by remember { mutableStateOf("") }
     var hardwareTestResults by remember { mutableStateOf("") }
+    var scanMode by remember { mutableStateOf("Games") }
 
     var currencyAmount by remember { mutableStateOf("1.00") }
     var fromCurrency by remember { mutableStateOf("USD") }
@@ -137,11 +138,26 @@ private fun GameScoutScreen() {
                 status = "Add your Gemini API key in Settings before identifying an uploaded image."
             } else {
                 isScanning = true
-                status = "Loading uploaded cover image..."
+                status = if (scanMode == "Consoles") "Loading console photo..." else "Loading uploaded cover image..."
                 val bitmap = loadImageBitmap(context, imageUri)
                 if (bitmap == null) {
                     isScanning = false
                     status = "Couldn't open that image. Please try another photo."
+                } else if (scanMode == "Consoles") {
+                    status = "Identifying console hardware and variant..."
+                    identifyConsoleHardware(
+                        context,
+                        bitmap,
+                        apiKey,
+                        onIdentified = { hardware ->
+                            isScanning = false
+                            status = "Identified console: $hardware"
+                        },
+                        onStatus = {
+                            isScanning = false
+                            status = it
+                        }
+                    )
                 } else {
                     status = "Identifying uploaded cover artwork..."
                     identifyGameCover(
@@ -296,8 +312,30 @@ private fun GameScoutScreen() {
                 Spacer(Modifier.height(8.dp))
                 Text(status, color = Color.LightGray)
                 Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Games", "Consoles").forEach { mode ->
+                        val selected = scanMode == mode
+                        if (selected) {
+                            Button(
+                                onClick = { scanMode = mode },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isScanning
+                            ) { Text(mode) }
+                        } else {
+                            OutlinedButton(
+                                onClick = { scanMode = mode },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isScanning
+                            ) { Text(mode) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
 
-                if (cameraGranted) {
+                if (cameraGranted && scanMode == "Games") {
                     CameraScanner(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -321,7 +359,7 @@ private fun GameScoutScreen() {
                         onClick = { imagePickerLauncher.launch("image/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Upload cover image")
+                        Text("Upload game cover image")
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
@@ -373,6 +411,19 @@ private fun GameScoutScreen() {
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.fillMaxWidth()
                         )
+                    }
+                } else if (scanMode == "Consoles") {
+                    Text(
+                        "Upload a photo of a console or handheld. GameScout will identify the system, color variant, special edition, and hardware revision when visible.",
+                        color = Color.LightGray,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    OutlinedButton(
+                        onClick = { imagePickerLauncher.launch("image/*") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isScanning
+                    ) {
+                        Text("Upload console image")
                     }
                 } else {
                     Box(
