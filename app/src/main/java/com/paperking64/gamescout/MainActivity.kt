@@ -53,6 +53,7 @@ import java.net.URLEncoder
 
 private const val PREFS_NAME = "gamescout_settings"
 private const val PREF_GEMINI_KEY = "gemini_api_key"
+private const val PREF_PRIMARY_REGION = "primary_region"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +69,10 @@ private fun GameScoutScreen() {
     val preferences = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     var apiKey by remember { mutableStateOf(preferences.getString(PREF_GEMINI_KEY, "") ?: "") }
     var apiKeyDraft by remember { mutableStateOf(apiKey) }
+    val regionOptions = listOf("North America (NTSC-U)", "Europe/Australia (PAL)", "Japan (NTSC-J)")
+    var primaryRegion by remember { mutableStateOf(preferences.getString(PREF_PRIMARY_REGION, regionOptions[0]) ?: regionOptions[0]) }
+    var regionDraft by remember { mutableStateOf(primaryRegion) }
+    var regionMenuExpanded by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var cameraGranted by remember {
         mutableStateOf(
@@ -88,10 +93,17 @@ private fun GameScoutScreen() {
         if (!granted) status = "Camera permission is required to scan covers."
     }
 
-    fun openPriceCharting(search: String) {
+    fun openPriceCharting(search: String, useRegion: Boolean = true) {
         query = search
+        val regionTag = when (primaryRegion) {
+            "Europe/Australia (PAL)" -> "PAL"
+            "Japan (NTSC-J)" -> "NTSC-J"
+            else -> "NTSC-U"
+        }
+        // A barcode already identifies a specific release, so only title searches get a region hint.
+        val searchWithRegion = if (useRegion && search.any { it.isLetter() }) "$search $regionTag" else search
         pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
-            URLEncoder.encode(search, "UTF-8")
+            URLEncoder.encode(searchWithRegion, "UTF-8")
         sheetOpen = true
     }
 
@@ -159,6 +171,7 @@ private fun GameScoutScreen() {
                         Text("BETA", color = Color(0xFFB388FF))
                         IconButton(onClick = {
                             apiKeyDraft = apiKey
+                            regionDraft = primaryRegion
                             settingsOpen = true
                         }) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
@@ -185,7 +198,7 @@ private fun GameScoutScreen() {
                         onBarcodeDetected = { code ->
                             isScanning = false
                             status = "Barcode detected. Opening PriceCharting..."
-                            openPriceCharting(code)
+                            openPriceCharting(code, useRegion = false)
                         },
                         onStatus = { status = it }
                     )
@@ -288,6 +301,36 @@ private fun GameScoutScreen() {
                 title = { Text("GameScout settings") },
                 text = {
                     Column {
+                        Text("Primary game region", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(6.dp))
+                        Box {
+                            OutlinedButton(
+                                onClick = { regionMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(regionDraft)
+                            }
+                            DropdownMenu(
+                                expanded = regionMenuExpanded,
+                                onDismissRequest = { regionMenuExpanded = false }
+                            ) {
+                                regionOptions.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option) },
+                                        onClick = {
+                                            regionDraft = option
+                                            regionMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            "Title searches will prioritize this region by adding its region code to the PriceCharting search. Barcode searches use the barcode as-is.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                        Spacer(Modifier.height(16.dp))
                         Text(
                             "Gemini API key",
                             style = MaterialTheme.typography.labelLarge
@@ -311,7 +354,11 @@ private fun GameScoutScreen() {
                 confirmButton = {
                     TextButton(onClick = {
                         apiKey = apiKeyDraft.trim()
-                        preferences.edit().putString(PREF_GEMINI_KEY, apiKey).apply()
+                        primaryRegion = regionDraft
+                        preferences.edit()
+                            .putString(PREF_GEMINI_KEY, apiKey)
+                            .putString(PREF_PRIMARY_REGION, primaryRegion)
+                            .apply()
                         settingsOpen = false
                         status = if (apiKey.isBlank()) {
                             "Gemini key removed. Barcode scanning is still available."
