@@ -569,14 +569,19 @@ private fun identifyGameCover(
             val imageBase64 = Base64.encodeToString(imageOutput.toByteArray(), Base64.NO_WRAP)
 
             val prompt = """
-                Identify the video game shown by the FRONT COVER ART in this photo.
-                Use the artwork and the main game title, not publisher logos, console branding,
-                review quotes, stickers, rating symbols, spine text, or other incidental text.
-                Return the official game title and platform when you can identify them.
-                If the image is not a recognizable video game front cover, or you cannot confidently
-                identify the game, return an empty title. Do not guess.
+                Identify the video game shown on this image. It may be a front cover, box art,
+                promotional image, or a photo of a game case.
+                Read the large stylized game title carefully, even if the letters have decorative
+                effects. Console branding such as "Nintendo GameCube" identifies the PLATFORM,
+                not the game title. Publisher logos, review quotes, stickers, rating symbols, and
+                small incidental text are not the game title.
+                Combine readable title text with the artwork to identify the exact game.
+                Do not return an empty title merely because the image is slightly blurry or the
+                title uses unusual lettering. If part of the title is readable, make the best
+                supported identification. Do not invent an edition or subtitle that is not shown.
+                Return the official game title and platform.
                 Respond with JSON only, exactly this shape:
-                {"title":"game title or empty string","platform":"platform or empty string","confidence":0.0}
+                {"title":"official game title","platform":"platform","confidence":0.0}
                 Confidence must be a number from 0 to 1.
             """.trimIndent()
 
@@ -634,7 +639,7 @@ private fun identifyGameCover(
             val platform = result.optString("platform").trim()
             val confidence = result.optDouble("confidence", 0.0)
 
-            if (title.isBlank() || confidence < 0.55) {
+            if (title.isBlank() || confidence < 0.30) {
                 throw IllegalStateException("Couldn't confidently identify that cover. Try a clearer, straight-on photo.")
             }
 
