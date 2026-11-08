@@ -1108,8 +1108,8 @@ private fun identifyGameCover(
     Thread {
         val startedAt = android.os.SystemClock.elapsedRealtime()
         try {
-            // Send one clear, reasonably detailed image. Do not wait for multiple
-            // PriceCharting searches or a second image-comparison request.
+            // One fast identification call. A second, visual box-art comparison only
+            // runs when the cover belongs to a series with look-alike entries.
             val scannedBitmap = resizeBitmap(originalBitmap, 1024)
             val initialImage = bitmapToBase64(scannedBitmap, 82)
             val prompt = """
@@ -1130,8 +1130,14 @@ private fun identifyGameCover(
                 illustration contains numbers. Do not invent a sequel or edition.
                 Identify the platform from the packaging where possible.
 
+                SERIES LOOK-ALIKES:
+                If this game belongs to a series with other entries on the same platform
+                whose covers could be confused with it (e.g. Mario Party, Mario Party 2,
+                Mario Party 3), list up to 3 of those OTHER entries in "similar_titles".
+                Otherwise return an empty list.
+
                 Return JSON only, using exactly these fields:
-                {"title":"exact game title","platform":"console","visible_title_text":"words and numbers visibly printed in the title/logo","title_number_is_printed":false,"confidence":0.0}
+                {"title":"exact game title","platform":"console","visible_title_text":"words and numbers visibly printed in the title/logo","title_number_is_printed":false,"similar_titles":[],"confidence":0.0}
                 Set title_number_is_printed to true only when a sequel number is
                 actually visible in the printed title/logo. Confidence is 0 to 1.
             """.trimIndent()
@@ -1139,7 +1145,7 @@ private fun identifyGameCover(
             val parts = org.json.JSONArray()
                 .put(JSONObject().put("text", prompt))
                 .put(imagePart(initialImage))
-            val response = callGemini(apiKey, parts, 220)
+            val response = callGemini(apiKey, parts, 320)
             val result = extractGeminiJson(response)
 
             var title = result.optString("title").trim()
@@ -1167,9 +1173,33 @@ private fun identifyGameCover(
                 }
             }
 
+            // Visual check: compare the photo with reference box art for the title and
+            // its series look-alikes, so artwork details (like a dice block showing 3)
+            // can't turn "Mario Party" into "Mario Party 3". Any failure keeps the
+            // first answer.
+            val similar = result.optJSONArray("similar_titles")?.let { array ->
+                (0 until array.length()).map { array.optString(it).trim() }
+            }.orEmpty()
+            val candidates = (listOf(title) + similar)
+                .filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                .distinctBy { normalizeForTest(it) }
+                .take(4)
+            var visualNote = ""
+            if (candidates.size > 1) {
+                val visual = try {
+                    matchCoverVisually(apiKey, scannedBitmap, candidates, platform)
+                } catch (_: Exception) { null }
+                if (visual != null && !visual.equals(title, ignoreCase = true)) {
+                    visualNote = " Box-art match corrected \"$title\" to \"$visual\"."
+                    title = visual
+                } else if (visual != null) {
+                    visualNote = " Confirmed by box-art match."
+                }
+            }
+
             val totalSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
             val searchText = title
-            val detail = if (correctedUnsupportedNumber) {
+            val detail = visualNote + if (correctedUnsupportedNumber && visualNote.isBlank()) {
                 " Removed a sequel number that was not printed in the title."
             } else if (platform.isNotBlank()) {
                 " Platform: $platform."
@@ -1193,6 +1223,118 @@ private fun identifyGameCover(
             ContextCompat.getMainExecutor(context).execute { onStatus(message) }
         }
     }.start()
+}
+
+// ---- Visual box-art matching ----------------------------------------------
+
+private const val REFERENCE_USER_AGENT = "GameScout/0.9.5 (https://github.com/paperking64/GameScout)"
+
+private fun httpGet(url: String, maxBytes: Int = 1_500_000): ByteArray? {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 4000
+        readTimeout = 5000
+        setRequestProperty("User-Agent", REFERENCE_USER_AGENT)
+    }
+    return try {
+        if (connection.responseCode !in 200..299) return null
+        connection.inputStream.use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                out.write(buffer, 0, read)
+                if (out.size() > maxBytes) return null
+            }
+            out.toByteArray()
+        }
+    } catch (_: Exception) {
+        null
+    } finally {
+        connection.disconnect()
+    }
+}
+
+/** Finds the game's Wikipedia article and returns its infobox cover image, if any. */
+private fun fetchReferenceCover(title: String, platform: String): Bitmap? {
+    val query = URLEncoder.encode("$title $platform video game".trim(), "UTF-8")
+    val searchBytes = httpGet("https://en.wikipedia.org/w/rest.php/v1/search/page?q=$query&limit=5") ?: return null
+    val pages = JSONObject(String(searchBytes, Charsets.UTF_8)).optJSONArray("pages") ?: return null
+    val wanted = normalizeForTest(title).replace(Regex("[^a-z0-9]+"), " ").trim()
+    var key: String? = null
+    for (i in 0 until pages.length()) {
+        val page = pages.optJSONObject(i) ?: continue
+        val pageTitle = normalizeForTest(page.optString("title"))
+            .replace(Regex("\\(.*?\\)"), " ").replace(Regex("[^a-z0-9]+"), " ").trim()
+        // Exact title match, so "Mario Party" never picks the "Mario Party 3" article.
+        if (pageTitle == wanted) { key = page.optString("key"); break }
+    }
+    key ?: return null
+    val summaryBytes = httpGet(
+        "https://en.wikipedia.org/api/rest_v1/page/summary/" + URLEncoder.encode(key, "UTF-8")
+    ) ?: return null
+    val summary = JSONObject(String(summaryBytes, Charsets.UTF_8))
+    val imageUrl = summary.optJSONObject("originalimage")?.optString("source")?.takeIf { it.isNotBlank() }
+        ?: summary.optJSONObject("thumbnail")?.optString("source")?.takeIf { it.isNotBlank() }
+        ?: return null
+    if (imageUrl.endsWith(".svg", ignoreCase = true)) return null
+    val imageBytes = httpGet(imageUrl) ?: return null
+    val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return null
+    return resizeBitmap(bitmap, 512)
+}
+
+/**
+ * Compares the scanned photo with reference covers for each candidate title and
+ * returns the candidate whose box art matches, or null when it can't tell.
+ */
+private fun matchCoverVisually(
+    apiKey: String,
+    photo: Bitmap,
+    candidates: List<String>,
+    platform: String
+): String? {
+    val pool = java.util.concurrent.Executors.newFixedThreadPool(candidates.size)
+    val references = try {
+        pool.invokeAll(
+            candidates.map { candidate ->
+                java.util.concurrent.Callable { candidate to fetchReferenceCover(candidate, platform) }
+            },
+            8, java.util.concurrent.TimeUnit.SECONDS
+        ).mapNotNull { future ->
+            try {
+                if (future.isCancelled) null else future.get().let { (name, cover) -> cover?.let { name to it } }
+            } catch (_: Exception) { null }
+        }
+    } finally {
+        pool.shutdownNow()
+    }
+    // Need at least two references to tell entries apart.
+    if (references.size < 2) return null
+
+    val labels = references.indices.map { ('A' + it).toString() }
+    val prompt = """
+        The first image is a photo of physical game packaging (${platform.ifBlank { "unknown platform" }}).
+        The following images are official reference covers, labelled in order:
+        ${references.indices.joinToString("\n        ") { "${labels[it]}: ${references[it].first}" }}
+
+        Decide which reference shows the SAME cover artwork as the photo. Compare the
+        overall composition, character poses and positions, background scene, and the
+        shape and wording of the title logo. Numbers inside the illustration (dice,
+        scores, items) are NOT sequel numbers and must not decide the answer.
+        Regional covers can differ slightly; judge the artwork as a whole. If none
+        clearly matches, answer "none".
+
+        Return JSON only: {"match":"A","confidence":0.0,"reason":"short"}
+    """.trimIndent()
+    val parts = org.json.JSONArray()
+        .put(JSONObject().put("text", prompt))
+        .put(imagePart(bitmapToBase64(resizeBitmap(photo, 768), 80)))
+    references.forEach { (_, cover) -> parts.put(imagePart(bitmapToBase64(cover, 80))) }
+    val result = extractGeminiJson(callGemini(apiKey, parts, 160))
+    val match = result.optString("match").trim().uppercase()
+    val index = labels.indexOf(match)
+    if (index < 0 || result.optDouble("confidence", 0.0) < 0.5) return null
+    return references[index].first
 }
 
 private fun resizeBitmap(source: Bitmap, maxDimension: Int): Bitmap {
