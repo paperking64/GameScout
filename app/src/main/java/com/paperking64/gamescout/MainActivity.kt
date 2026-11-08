@@ -343,7 +343,7 @@ private fun GameScoutScreen() {
                             color = Color.White
                         )
                         Text(
-                            "Identifying game and searching PriceCharting...",
+                            "Gemini can take up to a minute to respond. GameScout will retry automatically if Google is busy.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.LightGray
                         )
@@ -735,31 +735,62 @@ private fun identifyGameCover(
             val endpoint = URL(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
             )
-            connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 10000
-                readTimeout = 15000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-            }
-            connection.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
+            var responseText = ""
+            var responseCode = 0
+            for (attempt in 0..2) {
+                var attemptConnection: HttpURLConnection? = null
+                try {
+                    attemptConnection = (endpoint.openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 20000
+                        readTimeout = 60000
+                        doOutput = true
+                        useCaches = false
+                        setRequestProperty("Content-Type", "application/json")
+                        setRequestProperty("x-goog-api-key", apiKey)
+                    }
+                    attemptConnection.outputStream.use {
+                        it.write(requestBody.toString().toByteArray(Charsets.UTF_8))
+                    }
+                    responseCode = attemptConnection.responseCode
+                    responseText = (if (responseCode in 200..299) {
+                        attemptConnection.inputStream
+                    } else {
+                        attemptConnection.errorStream
+                    })?.bufferedReader()?.use { it.readText() }.orEmpty()
 
-            val responseCode = connection.responseCode
-            val responseText = (if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            })?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    if (responseCode in listOf(408, 429, 500, 502, 503, 504) && attempt < 2) {
+                        Thread.sleep(1500L * (1L shl attempt))
+                        continue
+                    }
+                    if (responseCode !in 200..299) {
+                        val detail = try {
+                            JSONObject(responseText).optString("message")
+                        } catch (_: Exception) { "" }
+                        throw IllegalStateException(
+                            when (responseCode) {
+                                400, 401, 403 -> "Gemini rejected the API key or request (HTTP $responseCode). Check that the key is copied correctly and that its project has Gemini API access."
+                                429 -> "Gemini rate limit reached after retries. Wait a minute and try again."
+                                503, 504 -> "Google's Gemini service is temporarily overloaded (HTTP $responseCode). Try again shortly."
+                                else -> "Gemini request failed (HTTP $responseCode). $detail"
+                            }
+                        )
+                    }
+                    break
+                } catch (timeout: java.net.SocketTimeoutException) {
+                    if (attempt == 2) {
+                        throw IllegalStateException(
+                            "Gemini did not respond after 3 attempts. Google may be busy; please try again in a minute."
+                        )
+                    }
+                    Thread.sleep(1500L * (1L shl attempt))
+                } finally {
+                    attemptConnection?.disconnect()
+                }
+            }
 
             if (responseCode !in 200..299) {
-                throw IllegalStateException(
-                    when (responseCode) {
-                        400, 403 -> "Gemini rejected the API key or request. Check the key in Settings."
-                        429 -> "Gemini request limit reached. Wait a moment and try again."
-                        else -> "Gemini could not identify this cover (HTTP $responseCode)."
-                    }
-                )
+                throw IllegalStateException("Gemini request failed (HTTP $responseCode). Please try again.")
             }
 
             val responseJson = JSONObject(responseText)
