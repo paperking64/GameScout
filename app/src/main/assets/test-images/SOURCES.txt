@@ -1,0 +1,16 @@
+GameScout recognition test fixtures
+
+ssbm-melee.jpg
+Source: Super Mario Wiki, Canadian Super Smash Bros. Melee box art.
+https://www.mariowiki.com/File:SSBM_Box_CAN.jpg
+Copyright Nintendo. Included only as a private test fixture for game-cover recognition.
+
+super-mario-64.jpg
+Source: Super Mario Wiki, North American Super Mario 64 cartridge photo (credited there to MobyGames).
+https://www.mariowiki.com/File:SM64NACartridge.jpg
+Copyright Nintendo. Included only as a private test fixture for game-cover recognition.
+
+pokemon-red.jpg
+Source: Pokemon Dungeon, North American Pokemon Red cartridge scan.
+https://pokemondungeon.com/pokemon-red-box-art/
+Copyright Nintendo / The Pokemon Company. Included only as a private test fixture for game-cover recognition.
