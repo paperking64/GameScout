@@ -343,7 +343,7 @@ private fun GameScoutScreen() {
                             color = Color.White
                         )
                         Text(
-                            "Gemini can take up to a minute to respond. GameScout will retry automatically if Google is busy.",
+                            "GameScout uses a fast model and will report a timeout if Google does not respond.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.LightGray
                         )
@@ -683,145 +683,158 @@ private fun identifyGameCover(
     onStatus: (String) -> Unit
 ) {
     Thread {
-        var connection: HttpURLConnection? = null
+        val startedAt = android.os.SystemClock.elapsedRealtime()
         try {
-            val maxDimension = 960
-            val scale = minOf(
-                1.0,
-                maxDimension.toDouble() / maxOf(originalBitmap.width, originalBitmap.height)
-            )
+            // Keep uploads small without making cartridge and cover titles unreadable.
+            val maxDimension = 768
+            val scale = minOf(1.0, maxDimension.toDouble() / maxOf(originalBitmap.width, originalBitmap.height))
             val bitmap = if (scale < 1.0) {
                 Bitmap.createScaledBitmap(
                     originalBitmap,
-                    (originalBitmap.width * scale).toInt(),
-                    (originalBitmap.height * scale).toInt(),
+                    (originalBitmap.width * scale).toInt().coerceAtLeast(1),
+                    (originalBitmap.height * scale).toInt().coerceAtLeast(1),
                     true
                 )
             } else originalBitmap
 
             val imageOutput = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 72, imageOutput)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 68, imageOutput)
             val imageBase64 = Base64.encodeToString(imageOutput.toByteArray(), Base64.NO_WRAP)
 
             val prompt = """
-                Identify the video game shown on this image. It may be a front cover, box art,
-                promotional image, or a photo of a game case.
-                Read the large stylized game title carefully, even if the letters have decorative
-                effects. Console branding such as "Nintendo GameCube" identifies the PLATFORM,
-                not the game title. Publisher logos, review quotes, stickers, rating symbols, and
-                small incidental text are not the game title.
-                Combine readable title text with the artwork to identify the exact game.
-                Do not return an empty title merely because the image is slightly blurry or the
-                title uses unusual lettering. If part of the title is readable, make the best
-                supported identification. Do not invent an edition or subtitle that is not shown.
-                Return the official game title and platform.
-                Respond with JSON only, exactly this shape:
-                {"title":"official game title","platform":"platform","confidence":0.0}
-                Confidence must be a number from 0 to 1.
+                Identify the video game shown in this image. Read the main game title,
+                not the console brand, publisher, review text, or rating label.
+                Return the official game title and the console/platform.
+                If the title is partly obscured, make the best identification supported
+                by the artwork. Do not invent an edition or subtitle.
+                Return JSON only: {"title":"game title","platform":"console","confidence":0.0}
+                Confidence is a number from 0 to 1.
             """.trimIndent()
 
             val parts = org.json.JSONArray()
+                .put(JSONObject().put("text", prompt))
                 .put(JSONObject().put("inline_data", JSONObject()
                     .put("mime_type", "image/jpeg")
                     .put("data", imageBase64)))
-                .put(JSONObject().put("text", prompt))
             val requestBody = JSONObject()
-                .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
+                .put("contents", org.json.JSONArray().put(JSONObject()
+                    .put("role", "user")
+                    .put("parts", parts)))
                 .put("generationConfig", JSONObject()
                     .put("responseMimeType", "application/json")
-                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
-                    .put("maxOutputTokens", 128))
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "MINIMAL"))
+                    .put("temperature", 0.1)
+                    .put("maxOutputTokens", 96))
 
-            val endpoint = URL(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
-            )
+            val model = "gemini-3.5-flash-lite"
+            val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent")
             var responseText = ""
             var responseCode = 0
-            for (attempt in 0..2) {
-                var attemptConnection: HttpURLConnection? = null
+            var attempt = 0
+            while (attempt < 2) {
+                attempt++
+                val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 10000
+                    readTimeout = 20000
+                    doOutput = true
+                    doInput = true
+                    useCaches = false
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("x-goog-api-key", apiKey)
+                }
                 try {
-                    attemptConnection = (endpoint.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        connectTimeout = 20000
-                        readTimeout = 60000
-                        doOutput = true
-                        useCaches = false
-                        setRequestProperty("Content-Type", "application/json")
-                        setRequestProperty("x-goog-api-key", apiKey)
-                    }
-                    attemptConnection.outputStream.use {
+                    connection.outputStream.use {
                         it.write(requestBody.toString().toByteArray(Charsets.UTF_8))
                     }
-                    responseCode = attemptConnection.responseCode
-                    responseText = (if (responseCode in 200..299) {
-                        attemptConnection.inputStream
-                    } else {
-                        attemptConnection.errorStream
-                    })?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    responseCode = connection.responseCode
+                    responseText = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+                        ?.bufferedReader()?.use { it.readText() }.orEmpty()
 
-                    if (responseCode in listOf(408, 429, 500, 502, 503, 504) && attempt < 2) {
-                        Thread.sleep(1500L * (1L shl attempt))
+                    val retryable = responseCode == 429 || responseCode == 500 ||
+                        responseCode == 502 || responseCode == 503 || responseCode == 504
+                    if (retryable && attempt == 1) {
+                        Thread.sleep(700)
                         continue
                     }
-                    if (responseCode !in 200..299) {
-                        val detail = try {
-                            JSONObject(responseText).optString("message")
-                        } catch (_: Exception) { "" }
-                        throw IllegalStateException(
-                            when (responseCode) {
-                                400, 401, 403 -> "Gemini rejected the API key or request (HTTP $responseCode). Check that the key is copied correctly and that its project has Gemini API access."
-                                429 -> "Gemini rate limit reached after retries. Wait a minute and try again."
-                                503, 504 -> "Google's Gemini service is temporarily overloaded (HTTP $responseCode). Try again shortly."
-                                else -> "Gemini request failed (HTTP $responseCode). $detail"
-                            }
-                        )
-                    }
                     break
-                } catch (timeout: java.net.SocketTimeoutException) {
-                    if (attempt == 2) {
-                        throw IllegalStateException(
-                            "Gemini did not respond after 3 attempts. Google may be busy; please try again in a minute."
-                        )
-                    }
-                    Thread.sleep(1500L * (1L shl attempt))
                 } finally {
-                    attemptConnection?.disconnect()
+                    connection.disconnect()
                 }
             }
 
+            val elapsedSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
             if (responseCode !in 200..299) {
-                throw IllegalStateException("Gemini request failed (HTTP $responseCode). Please try again.")
+                val detail = try {
+                    JSONObject(responseText).optJSONObject("error")?.optString("message")
+                        ?.takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+                val message = when (responseCode) {
+                    400, 401, 403 -> "Gemini rejected the request (HTTP " + responseCode + "). Check the API key and Gemini API access. " + (detail ?: "")
+                    404 -> "Gemini model or API endpoint was not found (HTTP 404). " + (detail ?: "")
+                    429 -> "Gemini rate limit reached. Wait a moment and try again. " + (detail ?: "")
+                    500, 502, 503, 504 -> "Google's Gemini service is temporarily unavailable (HTTP " + responseCode + "). " + (detail ?: "")
+                    else -> "Gemini request failed (HTTP " + responseCode + "). " + (detail ?: responseText.take(220))
+                }
+                throw IllegalStateException(message + " (after " +
+                    String.format(java.util.Locale.US, "%.1f", elapsedSeconds) + "s)")
             }
 
             val responseJson = JSONObject(responseText)
-            val candidateText = responseJson
-                .getJSONArray("candidates")
-                .getJSONObject(0)
-                .getJSONObject("content")
-                .getJSONArray("parts")
-                .getJSONObject(0)
-                .getString("text")
-            val result = JSONObject(candidateText)
+            val candidates = responseJson.optJSONArray("candidates")
+                ?: throw IllegalStateException("Gemini returned no candidates. Try a clearer photo.")
+            if (candidates.length() == 0) {
+                throw IllegalStateException("Gemini returned no match. Try a clearer photo.")
+            }
+            val candidate = candidates.optJSONObject(0) ?: JSONObject()
+            val candidateParts = candidate.optJSONObject("content")?.optJSONArray("parts")
+            val candidateText = buildString {
+                if (candidateParts != null) {
+                    for (i in 0 until candidateParts.length()) {
+                        val part = candidateParts.optJSONObject(i) ?: continue
+                        if (!part.optBoolean("thought", false)) append(part.optString("text"))
+                    }
+                }
+            }.trim()
+            if (candidateText.isBlank()) {
+                throw IllegalStateException("Gemini returned an empty answer (reason: " +
+                    candidate.optString("finishReason", "unknown") + "). Try again.")
+            }
+
+            val result = try {
+                JSONObject(candidateText)
+            } catch (_: Exception) {
+                val jsonStart = candidateText.indexOf('{')
+                val jsonEnd = candidateText.lastIndexOf('}')
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    JSONObject(candidateText.substring(jsonStart, jsonEnd + 1))
+                } else {
+                    throw IllegalStateException("Gemini's response was not valid game information. Please scan again.")
+                }
+            }
             val title = result.optString("title").trim()
             val platform = result.optString("platform").trim()
             val confidence = result.optDouble("confidence", 0.0)
-
-            if (title.isBlank() || confidence < 0.30) {
+            if (title.isBlank() || confidence < 0.25) {
                 throw IllegalStateException("Couldn't confidently identify that cover. Try a clearer, straight-on photo.")
             }
 
-            val searchText = if (platform.isNotBlank()) "$title $platform" else title
+            val searchText = if (platform.isNotBlank()) title + " " + platform else title
+            val totalSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
             ContextCompat.getMainExecutor(context).execute {
+                onStatus("Identified in " + String.format(java.util.Locale.US, "%.1f", totalSeconds) + "s")
                 onIdentified(searchText)
+            }
+        } catch (_: java.net.SocketTimeoutException) {
+            val elapsed = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
+            ContextCompat.getMainExecutor(context).execute {
+                onStatus("Gemini timed out after " + String.format(java.util.Locale.US, "%.0f", elapsed) +
+                    "s. Check your connection and try again.")
             }
         } catch (exception: Exception) {
             val message = exception.message ?: "Cover-art recognition failed. Try again."
-            ContextCompat.getMainExecutor(context).execute {
-                onStatus(message)
-            }
-        } finally {
-            connection?.disconnect()
+            ContextCompat.getMainExecutor(context).execute { onStatus(message) }
         }
     }.start()
 }
-
