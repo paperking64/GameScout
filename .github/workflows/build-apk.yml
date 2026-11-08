@@ -26,6 +26,27 @@ jobs:
           curl -fL --retry 3 -A "GameScout test fixtures" "https://www.mariowiki.com/images/7/7d/SSBM_Box_CAN.jpg" -o app/src/main/assets/test-images/ssbm-melee.jpg
           curl -fL --retry 3 -A "GameScout test fixtures" "https://www.mariowiki.com/images/2/2c/SM64NACartridge.jpg" -o app/src/main/assets/test-images/super-mario-64.jpg
           curl -fL --retry 3 -A "GameScout test fixtures" "https://pokemondungeon.com/wp-content/uploads/2026/09/3624.jpg" -o app/src/main/assets/test-images/pokemon-red.jpg
+          mkdir -p app/src/main/assets/test-images/consoles
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-3DS-AquaOpen.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nintendo-3ds-01.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Black%20Nintendo%203DS%20XL%20on%20white%20background.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nintendo-3ds-02.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo%203DS%20XL.JPG?width=1200" -o app/src/main/assets/test-images/consoles/nintendo-3ds-03.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo%203DS%20XL%20system%20(53665416074).jpg?width=1200" -o app/src/main/assets/test-images/consoles/nintendo-3ds-04.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Game%20Boy%20Advance%20SP%20Close.jpg?width=1200" -o app/src/main/assets/test-images/consoles/gba-sp-01.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Game%20Boy%20Advance%20SP.jpg?width=1200" -o app/src/main/assets/test-images/consoles/gba-sp-02.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Game%20Boy%20Advance%20SP%20blue.JPG?width=1200" -o app/src/main/assets/test-images/consoles/gba-sp-03.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Game%20Boy%20Advance%20SP%2020240213.jpg?width=1200" -o app/src/main/assets/test-images/consoles/gba-sp-04.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-console.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-01.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console-Back.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-02.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console-SD-Card.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-03.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console.png?width=1200" -o app/src/main/assets/test-images/consoles/wii-04.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/NES-Console-Set.png?width=1200" -o app/src/main/assets/test-images/consoles/nes-01.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-Entertainment-System-NES-Console-BR.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nes-02.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-NES-TL-Console-BL.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nes-03.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-NES-TL-Console-BR.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nes-04.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Sony%20PlayStation%202%20SCPH-39004%20(PAL-EUR)%20-%20front%20view.jpg?width=1200" -o app/src/main/assets/test-images/consoles/ps2-01.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Sony%20PlayStation%202%20SCPH-39004%20(PAL-EUR)%20-%20rear%20view.jpg?width=1200" -o app/src/main/assets/test-images/consoles/ps2-02.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Sony%20PlayStation%202%20SCPH-39004%20(PAL-EUR)%20-%20side%20view.jpg?width=1200" -o app/src/main/assets/test-images/consoles/ps2-03.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Sony%20PlayStation%202%20SCPH-50004%20(PAL-EUR)%20-%20front%20view.jpg?width=1200" -o app/src/main/assets/test-images/consoles/ps2-04.jpg
           cat > app/src/main/assets/test-images/SOURCES.txt <<'EOF'
           GameScout recognition test fixtures
 
@@ -43,6 +64,87 @@ jobs:
           Source: Pokemon Dungeon, North American Pokemon Red cartridge scan.
           https://pokemondungeon.com/pokemon-red-box-art/
           Copyright Nintendo / The Pokemon Company. Included only as a private test fixture for game-cover recognition.
+
+          nintendo-3ds-01.jpg
+          Source: Wikimedia Commons, File:Nintendo-3DS-AquaOpen.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo-3DS-AquaOpen.jpg
+
+          nintendo-3ds-02.jpg
+          Source: Wikimedia Commons, File:Black Nintendo 3DS XL on white background.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Black_Nintendo_3DS_XL_on_white_background.jpg
+
+          nintendo-3ds-03.jpg
+          Source: Wikimedia Commons, File:Nintendo 3DS XL.JPG (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo_3DS_XL.JPG
+
+          nintendo-3ds-04.jpg
+          Source: Wikimedia Commons, File:Nintendo 3DS XL system (53665416074).jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo_3DS_XL_system_(53665416074).jpg
+
+          gba-sp-01.jpg
+          Source: Wikimedia Commons, File:Game Boy Advance SP Close.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Game_Boy_Advance_SP_Close.jpg
+
+          gba-sp-02.jpg
+          Source: Wikimedia Commons, File:Game Boy Advance SP.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Game_Boy_Advance_SP.jpg
+
+          gba-sp-03.jpg
+          Source: Wikimedia Commons, File:Game Boy Advance SP blue.JPG (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Game_Boy_Advance_SP_blue.JPG
+
+          gba-sp-04.jpg
+          Source: Wikimedia Commons, File:Game Boy Advance SP 20240213.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Game_Boy_Advance_SP_20240213.jpg
+
+          wii-01.jpg
+          Source: Wikimedia Commons, File:Wii-console.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Wii-console.jpg
+
+          wii-02.jpg
+          Source: Wikimedia Commons, File:Wii-Console-Back.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Wii-Console-Back.jpg
+
+          wii-03.jpg
+          Source: Wikimedia Commons, File:Wii-Console-SD-Card.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Wii-Console-SD-Card.jpg
+
+          wii-04.jpg
+          Source: Wikimedia Commons, File:Wii-Console.png (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Wii-Console.png
+
+          nes-01.jpg
+          Source: Wikimedia Commons, File:NES-Console-Set.png (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:NES-Console-Set.png
+
+          nes-02.jpg
+          Source: Wikimedia Commons, File:Nintendo-Entertainment-System-NES-Console-BR.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo-Entertainment-System-NES-Console-BR.jpg
+
+          nes-03.jpg
+          Source: Wikimedia Commons, File:Nintendo-NES-TL-Console-BL.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo-NES-TL-Console-BL.jpg
+
+          nes-04.jpg
+          Source: Wikimedia Commons, File:Nintendo-NES-TL-Console-BR.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Nintendo-NES-TL-Console-BR.jpg
+
+          ps2-01.jpg
+          Source: Wikimedia Commons, File:Sony PlayStation 2 SCPH-39004 (PAL-EUR) - front view.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Sony_PlayStation_2_SCPH-39004_(PAL-EUR)_-_front_view.jpg
+
+          ps2-02.jpg
+          Source: Wikimedia Commons, File:Sony PlayStation 2 SCPH-39004 (PAL-EUR) - rear view.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Sony_PlayStation_2_SCPH-39004_(PAL-EUR)_-_rear_view.jpg
+
+          ps2-03.jpg
+          Source: Wikimedia Commons, File:Sony PlayStation 2 SCPH-39004 (PAL-EUR) - side view.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Sony_PlayStation_2_SCPH-39004_(PAL-EUR)_-_side_view.jpg
+
+          ps2-04.jpg
+          Source: Wikimedia Commons, File:Sony PlayStation 2 SCPH-50004 (PAL-EUR) - front view.jpg (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Sony_PlayStation_2_SCPH-50004_(PAL-EUR)_-_front_view.jpg
+          Bundled as private hardware-recognition test fixtures. See linked Commons pages for author and license details.
           EOF
           file app/src/main/assets/test-images/*
       - name: Save downloaded test images to repository
