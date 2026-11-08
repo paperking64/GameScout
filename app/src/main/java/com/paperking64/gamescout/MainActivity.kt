@@ -1096,7 +1096,7 @@ private fun CurrencyConverterCard(
             OutlinedTextField(
                 value = amount,
                 onValueChange = { value ->
-                    if (value.isEmpty() || value.matches(Regex("^\\\\d*\\\\.?\\\\d{0,2}$"))) {
+                    if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
                         onAmountChange(value)
                     }
                 },
