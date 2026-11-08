@@ -83,6 +83,35 @@ private fun GameScoutScreen() {
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
     var sampleTestResults by remember { mutableStateOf("") }
 
+    var currencyAmount by remember { mutableStateOf("1.00") }
+    var fromCurrency by remember { mutableStateOf("USD") }
+    var toCurrency by remember { mutableStateOf("CAD") }
+    var currencyRates by remember { mutableStateOf<Map<String, Double>>(emptyMap()) }
+    var currencyRateDate by remember { mutableStateOf("") }
+    var currencyLoading by remember { mutableStateOf(false) }
+    var currencyError by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        readCachedCurrencyRates(context)?.let { cached ->
+            currencyRates = cached.first
+            currencyRateDate = cached.second
+        }
+        currencyLoading = true
+        refreshCurrencyRates(
+            context,
+            onSuccess = { rates, date ->
+                currencyRates = rates
+                currencyRateDate = date
+                currencyError = ""
+                currencyLoading = false
+            },
+            onError = { message ->
+                currencyError = message
+                currencyLoading = false
+            }
+        )
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -299,6 +328,37 @@ private fun GameScoutScreen() {
                     }
                 }
 
+
+                Spacer(Modifier.height(18.dp))
+                CurrencyConverterCard(
+                    amount = currencyAmount,
+                    onAmountChange = { currencyAmount = it },
+                    fromCurrency = fromCurrency,
+                    onFromCurrencyChange = { fromCurrency = it },
+                    toCurrency = toCurrency,
+                    onToCurrencyChange = { toCurrency = it },
+                    rates = currencyRates,
+                    rateDate = currencyRateDate,
+                    loading = currencyLoading,
+                    error = currencyError,
+                    onRefresh = {
+                        currencyLoading = true
+                        currencyError = ""
+                        refreshCurrencyRates(
+                            context,
+                            onSuccess = { rates, date ->
+                                currencyRates = rates
+                                currencyRateDate = date
+                                currencyError = ""
+                                currencyLoading = false
+                            },
+                            onError = { message ->
+                                currencyError = message
+                                currencyLoading = false
+                            }
+                        )
+                    }
+                )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (apiKey.isBlank()) {
@@ -971,4 +1031,222 @@ private fun extractGeminiJson(responseText: String): JSONObject {
             throw IllegalStateException("Gemini's response was not valid game information. Please scan again.")
         }
     }
+}
+
+
+private val GAME_SCOUT_CURRENCIES = listOf(
+    "USD" to "US Dollar",
+    "CAD" to "Canadian Dollar",
+    "JPY" to "Japanese Yen",
+    "EUR" to "Euro",
+    "GBP" to "British Pound",
+    "AUD" to "Australian Dollar"
+)
+
+private const val PREF_CURRENCY_RATES = "currency_rates_json"
+private const val PREF_CURRENCY_DATE = "currency_rates_date"
+
+@Composable
+private fun CurrencyConverterCard(
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    fromCurrency: String,
+    onFromCurrencyChange: (String) -> Unit,
+    toCurrency: String,
+    onToCurrencyChange: (String) -> Unit,
+    rates: Map<String, Double>,
+    rateDate: String,
+    loading: Boolean,
+    error: String,
+    onRefresh: () -> Unit
+) {
+    val numericAmount = amount.toDoubleOrNull()
+    val converted = if (numericAmount != null &&
+        rates.containsKey(fromCurrency) && rates.containsKey(toCurrency)) {
+        numericAmount * (rates.getValue(toCurrency) / rates.getValue(fromCurrency))
+    } else null
+    val formattedResult = converted?.let {
+        val currency = java.util.Currency.getInstance(toCurrency)
+        java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).apply {
+            this.currency = currency
+            maximumFractionDigits = if (toCurrency == "JPY") 0 else 2
+            minimumFractionDigits = if (toCurrency == "JPY") 0 else 2
+        }.format(it)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0xFF1B1B22),
+        shape = RoundedCornerShape(18.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Currency converter", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                TextButton(onClick = onRefresh, enabled = !loading) {
+                    Text(if (loading) "Updating…" else "↻ Refresh")
+                }
+            }
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { value ->
+                    if (value.isEmpty() || value.matches(Regex("^\\\\d*\\\\.?\\\\d{0,2}$"))) {
+                        onAmountChange(value)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Amount") },
+                singleLine = true
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CurrencyPicker(
+                    selected = fromCurrency,
+                    onSelected = onFromCurrencyChange,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("→", color = Color.LightGray)
+                CurrencyPicker(
+                    selected = toCurrency,
+                    onSelected = onToCurrencyChange,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (formattedResult != null) {
+                Text(
+                    formattedResult,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color(0xFFB388FF)
+                )
+                val pairRate = rates.getValue(toCurrency) / rates.getValue(fromCurrency)
+                Text(
+                    "1 $fromCurrency = " + String.format(java.util.Locale.US, "%.5f", pairRate) + " $toCurrency",
+                    color = Color.LightGray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    if (loading) "Loading current exchange rates…" else "Exchange rates are not available yet.",
+                    color = Color.LightGray
+                )
+            }
+            if (rateDate.isNotBlank()) {
+                Text("Rates dated $rateDate · Daily reference rates", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+            }
+            if (error.isNotBlank()) {
+                Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrencyPicker(
+    selected: String,
+    onSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+        ) {
+            Text(selected, maxLines = 1)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            GAME_SCOUT_CURRENCIES.forEach { (code, name) ->
+                DropdownMenuItem(
+                    text = { Text("$code · $name") },
+                    onClick = {
+                        onSelected(code)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun readCachedCurrencyRates(context: Context): Pair<Map<String, Double>, String>? {
+    return try {
+        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val jsonText = preferences.getString(PREF_CURRENCY_RATES, null) ?: return null
+        val json = JSONObject(jsonText)
+        val rates = mutableMapOf("USD" to 1.0)
+        for (code in listOf("CAD", "JPY", "EUR", "GBP", "AUD")) {
+            val value = json.optDouble(code, Double.NaN)
+            if (value.isFinite() && value > 0.0) rates[code] = value
+        }
+        if (rates.size != 6) null
+        else rates to (preferences.getString(PREF_CURRENCY_DATE, "") ?: "")
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun refreshCurrencyRates(
+    context: Context,
+    onSuccess: (Map<String, Double>, String) -> Unit,
+    onError: (String) -> Unit
+) {
+    Thread {
+        try {
+            val url = URL("https://api.frankfurter.dev/v2/rates?base=USD&quotes=CAD,JPY,EUR,GBP,AUD")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 10000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "GameScout-Android")
+            }
+            val responseText: String
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) {
+                    throw IllegalStateException("Exchange-rate service returned HTTP $code.")
+                }
+                responseText = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } finally {
+                connection.disconnect()
+            }
+
+            val rows = org.json.JSONArray(responseText)
+            val rates = mutableMapOf("USD" to 1.0)
+            var date = ""
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                val quote = row.optString("quote")
+                val rate = row.optDouble("rate", Double.NaN)
+                if (quote in listOf("CAD", "JPY", "EUR", "GBP", "AUD") && rate.isFinite() && rate > 0.0) {
+                    rates[quote] = rate
+                    if (date.isBlank()) date = row.optString("date")
+                }
+            }
+            if (rates.size != 6 || date.isBlank()) {
+                throw IllegalStateException("The exchange-rate service returned incomplete currency data.")
+            }
+
+            val cache = JSONObject()
+            rates.filterKeys { it != "USD" }.forEach { (code, rate) -> cache.put(code, rate) }
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(PREF_CURRENCY_RATES, cache.toString())
+                .putString(PREF_CURRENCY_DATE, date)
+                .apply()
+            ContextCompat.getMainExecutor(context).execute { onSuccess(rates, date) }
+        } catch (exception: Exception) {
+            val message = exception.message ?: "Couldn't update exchange rates. Check your internet connection."
+            ContextCompat.getMainExecutor(context).execute { onError(message) }
+        }
+    }.start()
 }
