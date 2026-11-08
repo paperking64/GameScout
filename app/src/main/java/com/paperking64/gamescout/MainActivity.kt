@@ -645,6 +645,18 @@ private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
     }
 }
 
+private data class CoverCandidate(
+    val title: String,
+    val platform: String,
+    val confidence: Double
+)
+
+private data class ReferenceCover(
+    val candidate: CoverCandidate,
+    val image: Bitmap,
+    val productUrl: String
+)
+
 private fun identifyGameCover(
     context: Context,
     originalBitmap: Bitmap,
@@ -655,151 +667,111 @@ private fun identifyGameCover(
     Thread {
         val startedAt = android.os.SystemClock.elapsedRealtime()
         try {
-            // Keep uploads small without making cartridge and cover titles unreadable.
-            val maxDimension = 768
-            val scale = minOf(1.0, maxDimension.toDouble() / maxOf(originalBitmap.width, originalBitmap.height))
-            val bitmap = if (scale < 1.0) {
-                Bitmap.createScaledBitmap(
-                    originalBitmap,
-                    (originalBitmap.width * scale).toInt().coerceAtLeast(1),
-                    (originalBitmap.height * scale).toInt().coerceAtLeast(1),
-                    true
-                )
-            } else originalBitmap
-
-            val imageOutput = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 68, imageOutput)
-            val imageBase64 = Base64.encodeToString(imageOutput.toByteArray(), Base64.NO_WRAP)
-
+            val scannedBitmap = resizeBitmap(originalBitmap, 768)
+            val initialImage = bitmapToBase64(scannedBitmap, 68)
             val prompt = """
-                Identify the video game shown in this image. Read the main game title,
-                not the console brand, publisher, review text, or rating label.
-                Return the official game title and the console/platform.
-                If the title is partly obscured, make the best identification supported
-                by the artwork. Do not invent an edition or subtitle.
-                Return JSON only: {"title":"game title","platform":"console","confidence":0.0}
-                Confidence is a number from 0 to 1.
+                Identify the actual video game whose box, cartridge, or disc artwork is shown.
+                Read the MAIN GAME TITLE printed on the packaging. Do not mistake a number,
+                character, object, score, or decoration in the illustration for the game's title.
+                For example, a character holding a dice block showing 3 does NOT mean the game
+                is the third installment. Prefer explicit title text and distinctive packaging.
+                Return the best match first, plus up to two plausible alternatives ONLY if the
+                artwork could reasonably be confused with them. Include the console/platform.
+                Do not invent editions, subtitles, or alternatives.
+                Return JSON only:
+                {"candidates":[{"title":"official game title","platform":"console","confidence":0.0}]}
+                Confidence is 0 to 1. Maximum three candidates.
             """.trimIndent()
 
-            val parts = org.json.JSONArray()
+            val firstParts = org.json.JSONArray()
                 .put(JSONObject().put("text", prompt))
-                .put(JSONObject().put("inline_data", JSONObject()
-                    .put("mime_type", "image/jpeg")
-                    .put("data", imageBase64)))
-            val requestBody = JSONObject()
-                .put("contents", org.json.JSONArray().put(JSONObject()
-                    .put("role", "user")
-                    .put("parts", parts)))
-                .put("generationConfig", JSONObject()
-                    .put("responseMimeType", "application/json")
-                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "MINIMAL"))
-                    .put("temperature", 0.1)
-                    .put("maxOutputTokens", 96))
+                .put(imagePart(initialImage))
+            val firstResponse = callGemini(apiKey, firstParts, 180)
+            val firstJson = extractGeminiJson(firstResponse)
+            val candidateArray = firstJson.optJSONArray("candidates")
+                ?: throw IllegalStateException("Gemini did not return game candidates. Please scan again.")
 
-            val model = "gemini-3.5-flash-lite"
-            val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent")
-            var responseText = ""
-            var responseCode = 0
-            var attempt = 0
-            while (attempt < 2) {
-                attempt++
-                val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 10000
-                    readTimeout = 20000
-                    doOutput = true
-                    doInput = true
-                    useCaches = false
-                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("x-goog-api-key", apiKey)
-                }
-                try {
-                    connection.outputStream.use {
-                        it.write(requestBody.toString().toByteArray(Charsets.UTF_8))
-                    }
-                    responseCode = connection.responseCode
-                    responseText = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
-                        ?.bufferedReader()?.use { it.readText() }.orEmpty()
-
-                    val retryable = responseCode == 429 || responseCode == 500 ||
-                        responseCode == 502 || responseCode == 503 || responseCode == 504
-                    if (retryable && attempt == 1) {
-                        Thread.sleep(700)
-                        continue
-                    }
-                    break
-                } finally {
-                    connection.disconnect()
-                }
+            val candidates = mutableListOf<CoverCandidate>()
+            for (i in 0 until minOf(candidateArray.length(), 3)) {
+                val item = candidateArray.optJSONObject(i) ?: continue
+                val title = item.optString("title").trim()
+                val platform = item.optString("platform").trim()
+                val confidence = item.optDouble("confidence", 0.0)
+                if (title.isNotBlank()) candidates.add(CoverCandidate(title, platform, confidence))
             }
-
-            val elapsedSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
-            if (responseCode !in 200..299) {
-                val detail = try {
-                    JSONObject(responseText).optJSONObject("error")?.optString("message")
-                        ?.takeIf { it.isNotBlank() }
-                } catch (_: Exception) { null }
-                val message = when (responseCode) {
-                    400, 401, 403 -> "Gemini rejected the request (HTTP " + responseCode + "). Check the API key and Gemini API access. " + (detail ?: "")
-                    404 -> "Gemini model or API endpoint was not found (HTTP 404). " + (detail ?: "")
-                    429 -> "Gemini rate limit reached. Wait a moment and try again. " + (detail ?: "")
-                    500, 502, 503, 504 -> "Google's Gemini service is temporarily unavailable (HTTP " + responseCode + "). " + (detail ?: "")
-                    else -> "Gemini request failed (HTTP " + responseCode + "). " + (detail ?: responseText.take(220))
-                }
-                throw IllegalStateException(message + " (after " +
-                    String.format(java.util.Locale.US, "%.1f", elapsedSeconds) + "s)")
-            }
-
-            val responseJson = JSONObject(responseText)
-            val candidates = responseJson.optJSONArray("candidates")
-                ?: throw IllegalStateException("Gemini returned no candidates. Try a clearer photo.")
-            if (candidates.length() == 0) {
-                throw IllegalStateException("Gemini returned no match. Try a clearer photo.")
-            }
-            val candidate = candidates.optJSONObject(0) ?: JSONObject()
-            val candidateParts = candidate.optJSONObject("content")?.optJSONArray("parts")
-            val candidateText = buildString {
-                if (candidateParts != null) {
-                    for (i in 0 until candidateParts.length()) {
-                        val part = candidateParts.optJSONObject(i) ?: continue
-                        if (!part.optBoolean("thought", false)) append(part.optString("text"))
-                    }
-                }
-            }.trim()
-            if (candidateText.isBlank()) {
-                throw IllegalStateException("Gemini returned an empty answer (reason: " +
-                    candidate.optString("finishReason", "unknown") + "). Try again.")
-            }
-
-            val result = try {
-                JSONObject(candidateText)
-            } catch (_: Exception) {
-                val jsonStart = candidateText.indexOf('{')
-                val jsonEnd = candidateText.lastIndexOf('}')
-                if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                    JSONObject(candidateText.substring(jsonStart, jsonEnd + 1))
-                } else {
-                    throw IllegalStateException("Gemini's response was not valid game information. Please scan again.")
-                }
-            }
-            val title = result.optString("title").trim()
-            val platform = result.optString("platform").trim()
-            val confidence = result.optDouble("confidence", 0.0)
-            if (title.isBlank() || confidence < 0.25) {
+            if (candidates.isEmpty() || candidates.first().confidence < 0.2) {
                 throw IllegalStateException("Couldn't confidently identify that cover. Try a clearer, straight-on photo.")
             }
 
-            val searchText = title
+            // Search PriceCharting for each plausible title and retrieve the catalog cover art.
+            // This is a silent verification step; it does not change the final user search until
+            // the reference images have been compared with the photographed cover.
+            val references = mutableListOf<ReferenceCover>()
+            for (candidate in candidates) {
+                try {
+                    val reference = findPriceChartingReference(candidate)
+                    if (reference != null) references.add(reference)
+                } catch (_: Exception) {
+                    // A failed reference lookup should not prevent an otherwise useful scan.
+                }
+            }
+
+            var selected = candidates.first()
+            var verificationNote = ""
+            if (references.isNotEmpty()) {
+                try {
+                    val compareParts = org.json.JSONArray()
+                    val comparePrompt = StringBuilder()
+                        .append("Compare the photographed game packaging with the catalog reference images. ")
+                        .append("The first image is the user's scan. Each following image is a known PriceCharting ")
+                        .append("product cover with its candidate title written immediately before it. ")
+                        .append("Choose the reference whose actual packaging artwork, title placement, characters, ")
+                        .append("colors, and layout best match the scan. Ignore decorative numbers and incidental objects. ")
+                        .append("Do not choose based only on a similar character or franchise. If none match, return index 0. ")
+                        .append("Return JSON only: {\"bestIndex\":1,\"confidence\":0.0,\"reason\":\"brief reason\"}. ")
+                        .append("bestIndex is 1-based among the reference images; confidence is 0 to 1.")
+                        .toString()
+                    compareParts.put(JSONObject().put("text", comparePrompt))
+                    compareParts.put(imagePart(initialImage))
+                    references.take(3).forEachIndexed { index, reference ->
+                        compareParts.put(JSONObject().put("text",
+                            "REFERENCE " + (index + 1) + ": " + reference.candidate.title +
+                                " (" + reference.candidate.platform + "). PriceCharting catalog cover."))
+                        compareParts.put(imagePart(bitmapToBase64(resizeBitmap(reference.image, 512), 68)))
+                    }
+                    val compareResponse = callGemini(apiKey, compareParts, 120)
+                    val comparison = extractGeminiJson(compareResponse)
+                    val bestIndex = comparison.optInt("bestIndex", 0)
+                    val compareConfidence = comparison.optDouble("confidence", 0.0)
+                    if (bestIndex in 1..references.size && compareConfidence >= 0.55) {
+                        selected = references[bestIndex - 1].candidate
+                        if (!selected.title.equals(candidates.first().title, ignoreCase = true)) {
+                            verificationNote = " Reference images corrected the initial guess."
+                        } else {
+                            verificationNote = " Cover image verified."
+                        }
+                    } else {
+                        verificationNote = " Reference comparison was inconclusive; using the initial best match."
+                    }
+                } catch (_: Exception) {
+                    verificationNote = " Reference comparison unavailable; using the initial best match."
+                }
+            } else {
+                verificationNote = " No catalog reference images were available; using the initial best match."
+            }
+
             val totalSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
+            val searchText = selected.title
             ContextCompat.getMainExecutor(context).execute {
-                onStatus("Identified in " + String.format(java.util.Locale.US, "%.1f", totalSeconds) + "s")
+                onStatus("Identified in " +
+                    String.format(java.util.Locale.US, "%.1f", totalSeconds) + "s." + verificationNote)
                 onIdentified(searchText)
             }
         } catch (_: java.net.SocketTimeoutException) {
             val elapsed = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
             ContextCompat.getMainExecutor(context).execute {
-                onStatus("Gemini timed out after " + String.format(java.util.Locale.US, "%.0f", elapsed) +
+                onStatus("Gemini or cover verification timed out after " +
+                    String.format(java.util.Locale.US, "%.0f", elapsed) +
                     "s. Check your connection and try again.")
             }
         } catch (exception: Exception) {
@@ -807,4 +779,196 @@ private fun identifyGameCover(
             ContextCompat.getMainExecutor(context).execute { onStatus(message) }
         }
     }.start()
+}
+
+private fun findPriceChartingReference(candidate: CoverCandidate): ReferenceCover? {
+    val searchTerms = if (candidate.platform.isNotBlank()) {
+        candidate.title + " " + candidate.platform
+    } else candidate.title
+    val searchUrl = URL("https://www.pricecharting.com/search-products?type=prices&q=" +
+        URLEncoder.encode(searchTerms, "UTF-8"))
+    val connection = (searchUrl.openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 6500
+        readTimeout = 8000
+        instanceFollowRedirects = true
+        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
+        setRequestProperty("Accept", "text/html,application/xhtml+xml")
+    }
+    val html = try {
+        if (connection.responseCode !in 200..299) return null
+        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    } finally {
+        connection.disconnect()
+    }
+
+    // PriceCharting search results are product rows containing a /game/ link and cover image.
+    val gameLinkRegex = Regex("""href=["']([^"']*/game/[^"']+)["']""", RegexOption.IGNORE_CASE)
+    for (match in gameLinkRegex.findAll(html).take(8)) {
+        val href = match.groupValues[1]
+        val rowStart = html.lastIndexOf("<tr", match.range.first, ignoreCase = true)
+        val rowEnd = if (rowStart >= 0) html.indexOf("</tr>", match.range.last, ignoreCase = true) else -1
+        val region = if (rowStart >= 0 && rowEnd > rowStart) {
+            html.substring(rowStart, rowEnd + 5)
+        } else {
+            html.substring(
+                (match.range.first - 900).coerceAtLeast(0),
+                (match.range.last + 1100).coerceAtMost(html.length)
+            )
+        }
+        val imageTag = Regex("""<img\b[^>]*(?:src|data-src)=["']([^"']+)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .find(region) ?: continue
+        var imageUrl = imageTag.groupValues[1]
+        if (imageUrl.startsWith("//")) imageUrl = "https:" + imageUrl
+        if (imageUrl.startsWith("/")) imageUrl = "https://www.pricecharting.com" + imageUrl
+        if (!imageUrl.startsWith("https://")) continue
+
+        val productUrl = if (href.startsWith("http")) href else "https://www.pricecharting.com" + href
+        val imageConnection = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5000
+            readTimeout = 6500
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
+        }
+        try {
+            if (imageConnection.responseCode !in 200..299) continue
+            val bytes = imageConnection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > 2_500_000) return@use ByteArray(0)
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+            if (bytes.isEmpty()) continue
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+            return ReferenceCover(candidate, bitmap, productUrl)
+        } finally {
+            imageConnection.disconnect()
+        }
+    }
+    return null
+}
+
+private fun resizeBitmap(source: Bitmap, maxDimension: Int): Bitmap {
+    val scale = minOf(1.0, maxDimension.toDouble() / maxOf(source.width, source.height))
+    return if (scale < 1.0) {
+        Bitmap.createScaledBitmap(
+            source,
+            (source.width * scale).toInt().coerceAtLeast(1),
+            (source.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+    } else source
+}
+
+private fun bitmapToBase64(bitmap: Bitmap, quality: Int): String {
+    val output = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)
+    return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+}
+
+private fun imagePart(base64: String): JSONObject =
+    JSONObject().put("inline_data", JSONObject()
+        .put("mime_type", "image/jpeg")
+        .put("data", base64))
+
+private fun callGemini(apiKey: String, parts: org.json.JSONArray, maxTokens: Int): String {
+    val requestBody = JSONObject()
+        .put("contents", org.json.JSONArray().put(JSONObject()
+            .put("role", "user")
+            .put("parts", parts)))
+        .put("generationConfig", JSONObject()
+            .put("responseMimeType", "application/json")
+            .put("thinkingConfig", JSONObject().put("thinkingLevel", "MINIMAL"))
+            .put("temperature", 0.1)
+            .put("maxOutputTokens", maxTokens))
+    val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent")
+    var responseText = ""
+    var responseCode = 0
+    var attempt = 0
+    while (attempt < 2) {
+        attempt++
+        val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 10000
+            readTimeout = 20000
+            doOutput = true
+            doInput = true
+            useCaches = false
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("x-goog-api-key", apiKey)
+        }
+        try {
+            connection.outputStream.use {
+                it.write(requestBody.toString().toByteArray(Charsets.UTF_8))
+            }
+            responseCode = connection.responseCode
+            responseText = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val retryable = responseCode == 429 || responseCode == 500 ||
+                responseCode == 502 || responseCode == 503 || responseCode == 504
+            if (retryable && attempt == 1) {
+                Thread.sleep(500)
+                continue
+            }
+            break
+        } finally {
+            connection.disconnect()
+        }
+    }
+    if (responseCode !in 200..299) {
+        val detail = try {
+            JSONObject(responseText).optJSONObject("error")?.optString("message")
+                ?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) { null }
+        val message = when (responseCode) {
+            400, 401, 403 -> "Gemini rejected the request (HTTP " + responseCode + "). Check the API key and Gemini API access. "
+            404 -> "Gemini model or API endpoint was not found (HTTP 404). "
+            429 -> "Gemini rate limit reached. Wait a moment and try again. "
+            500, 502, 503, 504 -> "Google's Gemini service is temporarily unavailable (HTTP " + responseCode + "). "
+            else -> "Gemini request failed (HTTP " + responseCode + "). "
+        }
+        throw IllegalStateException(message + (detail ?: responseText.take(220)))
+    }
+    val responseJson = JSONObject(responseText)
+    val candidates = responseJson.optJSONArray("candidates")
+        ?: throw IllegalStateException("Gemini returned no candidates. Try a clearer photo.")
+    if (candidates.length() == 0) throw IllegalStateException("Gemini returned no match. Try again.")
+    val candidate = candidates.optJSONObject(0) ?: JSONObject()
+    val candidateParts = candidate.optJSONObject("content")?.optJSONArray("parts")
+    val text = buildString {
+        if (candidateParts != null) {
+            for (i in 0 until candidateParts.length()) {
+                val part = candidateParts.optJSONObject(i) ?: continue
+                if (!part.optBoolean("thought", false)) append(part.optString("text"))
+            }
+        }
+    }.trim()
+    if (text.isBlank()) {
+        throw IllegalStateException("Gemini returned an empty answer (reason: " +
+            candidate.optString("finishReason", "unknown") + "). Try again.")
+    }
+    return text
+}
+
+private fun extractGeminiJson(responseText: String): JSONObject {
+    return try {
+        JSONObject(responseText)
+    } catch (_: Exception) {
+        val jsonStart = responseText.indexOf('{')
+        val jsonEnd = responseText.lastIndexOf('}')
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+            JSONObject(responseText.substring(jsonStart, jsonEnd + 1))
+        } else {
+            throw IllegalStateException("Gemini's response was not valid game information. Please scan again.")
+        }
+    }
 }
