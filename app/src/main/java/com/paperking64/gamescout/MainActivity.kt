@@ -152,6 +152,7 @@ private fun GameScoutScreen() {
                         onIdentified = { hardware ->
                             isScanning = false
                             status = "Identified console: $hardware"
+                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
                         },
                         onStatus = {
                             isScanning = false
@@ -351,6 +352,7 @@ private fun GameScoutScreen() {
                         onConsoleIdentified = { hardware ->
                             isScanning = false
                             status = "Identified console: $hardware"
+                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
                         },
                         onGameIdentified = { titleAndPlatform ->
                             isScanning = false
@@ -434,6 +436,7 @@ private fun GameScoutScreen() {
                             onConsoleIdentified = { hardware ->
                                 isScanning = false
                                 status = "Identified console: $hardware"
+                            openPriceCharting(hardware.substringBefore(" (confidence").substringBefore(" ·"))
                             },
                             onGameIdentified = { titleAndPlatform ->
                                 isScanning = false
@@ -714,9 +717,15 @@ private fun CameraScanner(
     val lifecycleOwner = LocalLifecycleOwner.current
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
 
-    Box(modifier, contentAlignment = Alignment.BottomCenter) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Spacer(Modifier.height(8.dp))
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(190.dp),
             factory = { ctx ->
                 PreviewView(ctx).also { previewView ->
                     // TextureView avoids the camera SurfaceView drawing over Compose
@@ -863,7 +872,9 @@ private fun CameraScanner(
                     )
                 }
             },
-            modifier = Modifier.padding(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
         ) {
             Text("📷")
             Spacer(Modifier.width(8.dp))
