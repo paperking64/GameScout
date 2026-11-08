@@ -38,7 +38,7 @@ jobs:
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-console.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-01.jpg
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console-Back.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-02.jpg
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console-SD-Card.jpg?width=1200" -o app/src/main/assets/test-images/consoles/wii-03.jpg
-          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii-Console.png?width=1200" -o app/src/main/assets/test-images/consoles/wii-04.jpg
+          curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Wii%20with%20blue%20light.JPG?width=1200" -o app/src/main/assets/test-images/consoles/wii-04.jpg
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/NES-Console-Set.png?width=1200" -o app/src/main/assets/test-images/consoles/nes-01.jpg
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-Entertainment-System-NES-Console-BR.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nes-02.jpg
           curl -fL --retry 3 -A "GameScout hardware test fixtures" "https://commons.wikimedia.org/wiki/Special:FilePath/Nintendo-NES-TL-Console-BL.jpg?width=1200" -o app/src/main/assets/test-images/consoles/nes-03.jpg
@@ -110,8 +110,8 @@ jobs:
           https://commons.wikimedia.org/wiki/File:Wii-Console-SD-Card.jpg
 
           wii-04.jpg
-          Source: Wikimedia Commons, File:Wii-Console.png (author and license details on file page).
-          https://commons.wikimedia.org/wiki/File:Wii-Console.png
+          Source: Wikimedia Commons, File:Wii with blue light.JPG (author and license details on file page).
+          https://commons.wikimedia.org/wiki/File:Wii_with_blue_light.JPG
 
           nes-01.jpg
           Source: Wikimedia Commons, File:NES-Console-Set.png (author and license details on file page).
