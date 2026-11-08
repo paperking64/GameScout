@@ -826,16 +826,31 @@ private fun identifyConsoleHardware(
             val prompt = """
                 Identify the physical video game console or handheld shown in this photograph.
                 This is a hardware-recognition task, NOT a game-cover or text-reading task.
-                Identify it primarily from its physical shape, proportions, colors, button and
-                control layout, screen arrangement, hinges, ports, vents, disc slot, and other
-                visible hardware features. Do not require a visible logo or readable model text.
-                The photo may show the device from the front, back, side, top, bottom, open,
-                closed, or an oblique angle. If details are insufficient, identify only the
-                broadest family you can support and lower confidence. Never guess a more
-                specific revision than the image supports.
+                Identify it from physical shape, proportions, controls, screens, hinges, ports,
+                vents, disc slot, labels, and other visible hardware features. Do not require a
+                readable logo. The photo may show any side, an oblique angle, or a handheld open
+                or closed.
+
+                IMPORTANT: Identify the exact visible VARIANT, not just the product family.
+                Treat shell colorways as meaningful variants when the manufacturer gave them
+                distinct names. For example, a Nintendo GameCube can be Indigo, Jet Black,
+                or Spice Orange. If the shell is orange, report variant "Spice Orange", not
+                merely "orange"; if purple/indigo, report "Indigo". Apply the same care to
+                other systems with named colorways, special editions, and hardware revisions.
+                Keep the base product in "model" (for example, "GameCube") and put its named
+                colorway in "variant". Put the observed plain color in "color". Use "edition"
+                for a special themed edition, and "revision" for a hardware revision/model
+                number such as AGS-101, SCPH-70000, or New Nintendo 3DS XL when supported.
+                Do not confuse a color with a hardware revision or special edition.
+
+                Be conservative: infer a named colorway only when the visible shell color and
+                design support it. Lighting, reflections, filters, and white balance can alter
+                appearance. If exact colorway cannot be distinguished, set variant to
+                "Unknown" and lower variant_confidence. Never invent a limited edition or
+                revision. Identify the broad family even if the variant is uncertain.
 
                 Return JSON only:
-                {"manufacturer":"...","family":"...","model":"...","color":"...","form_factor":"...","visible_features":"...","confidence":0.0}
+                {"manufacturer":"...","family":"...","model":"...","variant":"...","color":"...","edition":"...","revision":"...","form_factor":"...","visible_features":"...","confidence":0.0,"variant_confidence":0.0}
             """.trimIndent()
             val parts = org.json.JSONArray()
                 .put(JSONObject().put("text", prompt))
@@ -845,15 +860,31 @@ private fun identifyConsoleHardware(
             val manufacturer = result.optString("manufacturer").trim()
             val family = result.optString("family").trim()
             val model = result.optString("model").trim()
+            val variant = result.optString("variant").trim().takeUnless {
+                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
+            }.orEmpty()
             val color = result.optString("color").trim()
+            val edition = result.optString("edition").trim().takeUnless {
+                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
+            }.orEmpty()
+            val revision = result.optString("revision").trim().takeUnless {
+                it.equals("unknown", ignoreCase = true) || it.equals("n/a", ignoreCase = true)
+            }.orEmpty()
             val features = result.optString("visible_features").trim()
             val confidence = result.optDouble("confidence", 0.0)
+            val variantConfidence = result.optDouble("variant_confidence", 0.0)
             if (family.isBlank() || confidence < 0.15) {
                 throw IllegalStateException("Couldn't confidently identify this hardware. Try another angle.")
             }
-            val actual = listOf(manufacturer, family, model, color)
-                .filter { it.isNotBlank() }.distinct().joinToString(" ") +
-                " (confidence ${(confidence * 100).toInt()}%)" +
+            val details = mutableListOf<String>()
+            if (variant.isNotBlank() && variantConfidence >= 0.35) details += variant
+            else if (color.isNotBlank()) details += color
+            if (edition.isNotBlank()) details += edition
+            if (revision.isNotBlank()) details += revision
+            val identity = (listOf(manufacturer, family, model) + details)
+                .filter { it.isNotBlank() }.distinct().joinToString(" ")
+            val actual = identity +
+                " (confidence ${(confidence * 100).toInt()}%, variant confidence ${(variantConfidence * 100).toInt()}%)" +
                 if (features.isNotBlank()) " · $features" else ""
             ContextCompat.getMainExecutor(context).execute { onIdentified(actual) }
         } catch (_: java.net.SocketTimeoutException) {
