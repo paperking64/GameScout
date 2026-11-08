@@ -164,7 +164,7 @@ private fun GameScoutScreen() {
         identifyGameCover(
             context, bitmap, apiKey,
             onIdentified = { actual ->
-                val passed = actual.contains(expectedTitle, ignoreCase = true)
+                val passed = normalizeForTest(actual).contains(normalizeForTest(expectedTitle))
                 runSampleTest(index + 1, results + "$expectedTitle: ${if (passed) "PASS" else "CHECK"} - $actual")
             },
             onStatus = { error ->
@@ -504,6 +504,7 @@ private fun CameraScanner(
                             }
                             val capture = ImageCapture.Builder()
                                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                .setJpegQuality(80)
                                 .build()
 
                             cameraProvider.unbindAll()
@@ -621,6 +622,11 @@ private fun CameraScanner(
     }
 }
 
+
+private fun normalizeForTest(value: String): String =
+    java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+        .replace("\\p{Mn}+".toRegex(), "")
+        .lowercase()
 
 private fun decodeSampledBitmap(path: String, maxDimension: Int): Bitmap? {
     return try {
