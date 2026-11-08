@@ -309,9 +309,7 @@ private fun GameScoutScreen() {
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Text(status, color = Color.LightGray)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -334,14 +332,26 @@ private fun GameScoutScreen() {
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                Text(
+                    status,
+                    color = Color.LightGray,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
 
                 if (cameraGranted && scanMode == "Games") {
                     CameraScanner(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 240.dp, max = 380.dp),
+                            .height(270.dp),
+                        scanMode = scanMode,
                         geminiApiKey = apiKey,
                         onScanningChanged = { isScanning = it },
+                        onConsoleIdentified = { hardware ->
+                            isScanning = false
+                            status = "Identified console: $hardware"
+                        },
                         onGameIdentified = { titleAndPlatform ->
                             isScanning = false
                             status = "Identified: $titleAndPlatform"
@@ -413,8 +423,39 @@ private fun GameScoutScreen() {
                         )
                     }
                 } else if (scanMode == "Consoles") {
+                    if (cameraGranted) {
+                        CameraScanner(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(270.dp),
+                            scanMode = scanMode,
+                            geminiApiKey = apiKey,
+                            onScanningChanged = { isScanning = it },
+                            onConsoleIdentified = { hardware ->
+                                isScanning = false
+                                status = "Identified console: $hardware"
+                            },
+                            onGameIdentified = { titleAndPlatform ->
+                                isScanning = false
+                                status = "Identified: $titleAndPlatform"
+                                openPriceCharting(titleAndPlatform)
+                            },
+                            onBarcodeDetected = { code ->
+                                isScanning = false
+                                status = "Barcode detected. Opening PriceCharting..."
+                                openPriceCharting(code)
+                            },
+                            onStatus = { status = it }
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Enable camera to scan consoles") }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "Upload a photo of a console or handheld. GameScout will identify the system, color variant, special edition, and hardware revision when visible.",
+                        "Point the camera at a console or handheld and tap Scan console. GameScout will identify the system, color variant, special edition, and hardware revision when visible.",
                         color = Color.LightGray,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -661,8 +702,10 @@ private fun GameScoutScreen() {
 @Composable
 private fun CameraScanner(
     modifier: Modifier,
+    scanMode: String,
     geminiApiKey: String,
     onScanningChanged: (Boolean) -> Unit,
+    onConsoleIdentified: (String) -> Unit,
     onGameIdentified: (String) -> Unit,
     onBarcodeDetected: (String) -> Unit,
     onStatus: (String) -> Unit
@@ -676,6 +719,9 @@ private fun CameraScanner(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 PreviewView(ctx).also { previewView ->
+                    // TextureView avoids the camera SurfaceView drawing over Compose
+                    // controls such as the Games / Consoles selector.
+                    previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
                         try {
@@ -722,6 +768,29 @@ private fun CameraScanner(
                                 if (bitmap == null) {
                                     onScanningChanged(false)
                                     onStatus("Could not read the captured photo.")
+                                    return
+                                }
+
+                                if (scanMode == "Consoles") {
+                                    if (geminiApiKey.isBlank()) {
+                                        onScanningChanged(false)
+                                        onStatus("Add your Gemini API key in Settings to identify consoles.")
+                                    } else {
+                                        onStatus("Identifying console hardware and variant...")
+                                        identifyConsoleHardware(
+                                            context,
+                                            bitmap,
+                                            geminiApiKey,
+                                            onIdentified = {
+                                                onScanningChanged(false)
+                                                onConsoleIdentified(it)
+                                            },
+                                            onStatus = {
+                                                onScanningChanged(false)
+                                                onStatus(it)
+                                            }
+                                        )
+                                    }
                                     return
                                 }
 
@@ -798,7 +867,7 @@ private fun CameraScanner(
         ) {
             Text("📷")
             Spacer(Modifier.width(8.dp))
-            Text("Scan game cover")
+            Text(if (scanMode == "Consoles") "Scan console" else "Scan game cover")
         }
     }
 }
