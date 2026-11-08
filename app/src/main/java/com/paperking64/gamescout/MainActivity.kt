@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
 import android.webkit.WebView
@@ -82,6 +84,34 @@ private fun GameScoutScreen() {
         if (!granted) status = "Camera permission is required to scan covers."
     }
 
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { imageUri: Uri? ->
+        if (imageUri != null) {
+            if (apiKey.isBlank()) {
+                status = "Add your Gemini API key in Settings before identifying an uploaded image."
+            } else {
+                status = "Loading uploaded cover image..."
+                val bitmap = loadImageBitmap(context, imageUri)
+                if (bitmap == null) {
+                    status = "Couldn't open that image. Please try another photo."
+                } else {
+                    status = "Identifying uploaded cover artwork..."
+                    identifyGameCover(
+                        context,
+                        bitmap,
+                        apiKey,
+                        onIdentified = { titleAndPlatform ->
+                            status = "Identified: $titleAndPlatform"
+                            openPriceCharting(titleAndPlatform)
+                        },
+                        onStatus = { status = it }
+                    )
+                }
+            }
+        }
+    }
+
     fun openPriceCharting(search: String) {
         query = search
         pageUrl = "https://www.pricecharting.com/search-products?type=prices&q=" +
@@ -145,6 +175,13 @@ private fun GameScoutScreen() {
                         },
                         onStatus = { status = it }
                     )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { imagePickerLauncher.launch("image/*") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Upload cover image")
+                    }
                 } else {
                     Box(
                         modifier = Modifier
@@ -193,9 +230,9 @@ private fun GameScoutScreen() {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (apiKey.isBlank()) {
-                        "Add a Gemini API key in Settings to identify cover artwork. Barcode scanning works without it."
+                        "Add a Gemini API key in Settings to identify cover artwork from camera scans or uploaded images."
                     } else {
-                        "Barcode scanning runs first. If no barcode is found, Gemini identifies the cover artwork."
+                        "Scan a cover or upload an image. Barcode scanning runs first for camera scans; Gemini identifies the artwork."
                     },
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall
@@ -405,6 +442,29 @@ private fun CameraScanner(
             Spacer(Modifier.width(8.dp))
             Text("Scan game cover")
         }
+    }
+}
+
+
+private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        val largestSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (largestSide / sampleSize > 2000) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        }
+    } catch (_: Exception) {
+        null
     }
 }
 
