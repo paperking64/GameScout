@@ -12,12 +12,27 @@ android {
         applicationId = "com.paperking64.gamescout"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         // First test build targets the ARM64 architecture used by modern Samsung phones.
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        create("stableDebug") {
+            storeFile = file("../signing/gamescout-test.keystore")
+            storePassword = "gamescout-test-key"
+            keyAlias = "gamescout"
+            keyPassword = "gamescout-test-key"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("stableDebug")
         }
     }
 
