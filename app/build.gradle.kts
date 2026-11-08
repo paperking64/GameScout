@@ -12,8 +12,8 @@ android {
         applicationId = "com.paperking64.gamescout"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.9.5"
+        versionCode = 15
+        versionName = "0.9.6"
 
         // First test build targets the ARM64 architecture used by modern Samsung phones.
         ndk {

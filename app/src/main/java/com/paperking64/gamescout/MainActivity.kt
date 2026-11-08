@@ -84,8 +84,6 @@ private fun GameScoutScreen() {
     var sheetOpen by remember { mutableStateOf(false) }
     var isScanning by remember { mutableStateOf(false) }
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
-    var sampleTestResults by remember { mutableStateOf("") }
-    var hardwareTestResults by remember { mutableStateOf("") }
     var scanMode by remember { mutableStateOf("Games") }
 
     var currencyAmount by remember { mutableStateOf("1.00") }
@@ -182,100 +180,6 @@ private fun GameScoutScreen() {
                 }
             }
         }
-    }
-
-    val sampleCases = listOf(
-        "test-images/ssbm-melee.jpg" to "Super Smash Bros. Melee",
-        "test-images/super-mario-64.jpg" to "Super Mario 64",
-        "test-images/pokemon-red.jpg" to "Pokemon Red"
-    )
-
-    fun runSampleTest(index: Int, results: List<String>) {
-        if (index >= sampleCases.size) {
-            sampleTestResults = results.joinToString("\n")
-            isScanning = false
-            status = "Sample recognition tests completed."
-            return
-        }
-        val (assetPath, expectedTitle) = sampleCases[index]
-        val bitmap = loadAssetBitmap(context, assetPath)
-        if (bitmap == null) {
-            runSampleTest(index + 1, results + "$expectedTitle: TEST IMAGE MISSING")
-            return
-        }
-        identifyGameCover(
-            context, bitmap, apiKey,
-            onIdentified = { actual ->
-                val passed = normalizeForTest(actual).contains(normalizeForTest(expectedTitle))
-                runSampleTest(index + 1, results + "$expectedTitle: ${if (passed) "PASS" else "CHECK"} - $actual")
-            },
-            onStatus = { error ->
-                runSampleTest(index + 1, results + "$expectedTitle: ERROR - $error")
-            }
-        )
-    }
-
-
-    val hardwareCases = listOf(
-        HardwareTestCase("test-images/consoles/nintendo-3ds-01.jpg", "Nintendo 3DS", "Open front", listOf("nintendo 3ds", "3ds")),
-        HardwareTestCase("test-images/consoles/nintendo-3ds-02.jpg", "Nintendo 3DS", "Closed front", listOf("nintendo 3ds", "3ds")),
-        HardwareTestCase("test-images/consoles/nintendo-3ds-03.jpg", "Nintendo 3DS", "Rear", listOf("nintendo 3ds", "3ds")),
-        HardwareTestCase("test-images/consoles/nintendo-3ds-04.jpg", "Nintendo 3DS", "Angled", listOf("nintendo 3ds", "3ds")),
-        HardwareTestCase("test-images/consoles/gba-sp-01.jpg", "Game Boy Advance SP", "Closed", listOf("game boy advance sp", "gba sp")),
-        HardwareTestCase("test-images/consoles/gba-sp-02.jpg", "Game Boy Advance SP", "Open", listOf("game boy advance sp", "gba sp")),
-        HardwareTestCase("test-images/consoles/gba-sp-03.jpg", "Game Boy Advance SP", "Blue variant", listOf("game boy advance sp", "gba sp")),
-        HardwareTestCase("test-images/consoles/gba-sp-04.jpg", "Game Boy Advance SP", "Alternate angle", listOf("game boy advance sp", "gba sp")),
-        HardwareTestCase("test-images/consoles/wii-01.jpg", "Nintendo Wii", "Front", listOf("nintendo wii", "wii")),
-        HardwareTestCase("test-images/consoles/wii-02.jpg", "Nintendo Wii", "Rear", listOf("nintendo wii", "wii")),
-        HardwareTestCase("test-images/consoles/wii-03.jpg", "Nintendo Wii", "Side / ports", listOf("nintendo wii", "wii")),
-        HardwareTestCase("test-images/consoles/wii-04.jpg", "Nintendo Wii", "Alternate view", listOf("nintendo wii", "wii")),
-        HardwareTestCase("test-images/consoles/nes-01.jpg", "Nintendo Entertainment System", "Front", listOf("nintendo entertainment system", "nes")),
-        HardwareTestCase("test-images/consoles/nes-02.jpg", "Nintendo Entertainment System", "Rear", listOf("nintendo entertainment system", "nes")),
-        HardwareTestCase("test-images/consoles/nes-03.jpg", "Nintendo Entertainment System", "Rear-left angle", listOf("nintendo entertainment system", "nes")),
-        HardwareTestCase("test-images/consoles/nes-04.jpg", "Nintendo Entertainment System", "Rear-right angle", listOf("nintendo entertainment system", "nes")),
-        HardwareTestCase("test-images/consoles/ps2-01.jpg", "PlayStation 2", "Fat front", listOf("playstation 2", "ps2")),
-        HardwareTestCase("test-images/consoles/ps2-02.jpg", "PlayStation 2", "Fat rear", listOf("playstation 2", "ps2")),
-        HardwareTestCase("test-images/consoles/ps2-03.jpg", "PlayStation 2", "Fat side", listOf("playstation 2", "ps2")),
-        HardwareTestCase("test-images/consoles/ps2-04.jpg", "PlayStation 2", "Alternate model front", listOf("playstation 2", "ps2"))
-    )
-
-    fun runHardwareTest(index: Int, results: List<String>) {
-        if (index >= hardwareCases.size) {
-            val summary = hardwareCases.map { it.expectedSystem }.distinct().map { system ->
-                val matching = results.filter { it.startsWith("$system|") }
-                val passed = matching.count { it.contains("|PASS|") }
-                "$system: $passed/${matching.size} passed"
-            }
-            hardwareTestResults = (summary + "" + results.map { row ->
-                val parts = row.split("|", limit = 4)
-                if (parts.size == 4) "${parts[0]} · ${parts[1]}: ${parts[2]} · ${parts[3]}" else row
-            }).joinToString("\n")
-            isScanning = false
-            status = "Hardware recognition tests completed."
-            return
-        }
-        val test = hardwareCases[index]
-        status = "Testing ${test.expectedSystem} · ${test.angle} (${index + 1}/${hardwareCases.size})..."
-        val bitmap = loadAssetBitmap(context, test.assetPath)
-        if (bitmap == null) {
-            runHardwareTest(index + 1, results + "${test.expectedSystem}|${test.angle}|FAIL|Test image missing")
-            return
-        }
-        identifyConsoleHardware(
-            context, bitmap, apiKey,
-            onIdentified = { match ->
-                val actual = match.searchTerm + if (match.details.isNotBlank()) " · ${match.details}" else ""
-                val normalized = normalizeForTest(match.searchTerm)
-                val passed = test.expectedAliases.any { alias -> normalized.contains(normalizeForTest(alias)) }
-                runHardwareTest(
-                    index + 1,
-                    results + "${test.expectedSystem}|${test.angle}|${if (passed) "PASS" else "FAIL"}|$actual"
-                )
-            },
-            onStatus = { error ->
-                runHardwareTest(index + 1, results + "${test.expectedSystem}|${test.angle}|ERROR|$error")
-            }
-        )
     }
 
     MaterialTheme(
@@ -390,57 +294,6 @@ private fun GameScoutScreen() {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Upload game cover image")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            if (apiKey.isBlank()) {
-                                status = "Add your Gemini API key in Settings before running sample tests."
-                            } else {
-                                sampleTestResults = ""
-                                isScanning = true
-                                status = "Testing three sample game images..."
-                                runSampleTest(0, emptyList())
-                            }
-                        },
-                        enabled = !isScanning,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Test sample images")
-                    }
-                    if (sampleTestResults.isNotBlank()) {
-                        Text(
-                            sampleTestResults,
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            if (apiKey.isBlank()) {
-                                status = "Add your Gemini API key in Settings before running hardware tests."
-                            } else {
-                                hardwareTestResults = ""
-                                isScanning = true
-                                status = "Preparing 20 console recognition tests..."
-                                runHardwareTest(0, emptyList())
-                            }
-                        },
-                        enabled = !isScanning,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Test 20 console photos")
-                    }
-                    if (hardwareTestResults.isNotBlank()) {
-                        Text(
-                            hardwareTestResults,
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 } else if (scanMode == "Consoles") {
                     if (cameraGranted) {
@@ -900,7 +753,7 @@ private fun CameraScanner(
 }
 
 
-private fun normalizeForTest(value: String): String =
+private fun normalizeText(value: String): String =
     java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
         .replace("\\p{Mn}+".toRegex(), "")
         .lowercase()
@@ -914,19 +767,6 @@ private fun decodeSampledBitmap(path: String, maxDimension: Int): Bitmap? {
         while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > maxDimension) sampleSize *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 }
         BitmapFactory.decodeFile(path, options)
-    } catch (_: Exception) { null }
-}
-
-private fun loadAssetBitmap(context: Context, assetPath: String): Bitmap? {
-    return try {
-        val bytes = context.assets.open(assetPath).use { it.readBytes() }
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sampleSize = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > 1400) sampleSize *= 2
-        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     } catch (_: Exception) { null }
 }
 
@@ -952,13 +792,6 @@ private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
     }
 }
 
-
-private data class HardwareTestCase(
-    val assetPath: String,
-    val expectedSystem: String,
-    val angle: String,
-    val expectedAliases: List<String>
-)
 
 /** A console identification: [searchTerm] goes to PriceCharting, [details] is shown in the status line only. */
 internal data class ConsoleMatch(val searchTerm: String, val details: String)
@@ -1182,7 +1015,7 @@ private fun identifyGameCover(
             }.orEmpty()
             val candidates = (listOf(title) + similar)
                 .filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                .distinctBy { normalizeForTest(it) }
+                .distinctBy { normalizeText(it) }
                 .take(4)
             var visualNote = ""
             if (candidates.size > 1) {
@@ -1260,11 +1093,11 @@ private fun fetchReferenceCover(title: String, platform: String): Bitmap? {
     val query = URLEncoder.encode("$title $platform video game".trim(), "UTF-8")
     val searchBytes = httpGet("https://en.wikipedia.org/w/rest.php/v1/search/page?q=$query&limit=5") ?: return null
     val pages = JSONObject(String(searchBytes, Charsets.UTF_8)).optJSONArray("pages") ?: return null
-    val wanted = normalizeForTest(title).replace(Regex("[^a-z0-9]+"), " ").trim()
+    val wanted = normalizeText(title).replace(Regex("[^a-z0-9]+"), " ").trim()
     var key: String? = null
     for (i in 0 until pages.length()) {
         val page = pages.optJSONObject(i) ?: continue
-        val pageTitle = normalizeForTest(page.optString("title"))
+        val pageTitle = normalizeText(page.optString("title"))
             .replace(Regex("\\(.*?\\)"), " ").replace(Regex("[^a-z0-9]+"), " ").trim()
         // Exact title match, so "Mario Party" never picks the "Mario Party 3" article.
         if (pageTitle == wanted) { key = page.optString("key"); break }
