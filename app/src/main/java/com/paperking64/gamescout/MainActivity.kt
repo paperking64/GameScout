@@ -705,18 +705,6 @@ private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
     }
 }
 
-private data class CoverCandidate(
-    val title: String,
-    val platform: String,
-    val confidence: Double
-)
-
-private data class ReferenceCover(
-    val candidate: CoverCandidate,
-    val image: Bitmap,
-    val productUrl: String
-)
-
 private fun identifyGameCover(
     context: Context,
     originalBitmap: Bitmap,
@@ -727,110 +715,83 @@ private fun identifyGameCover(
     Thread {
         val startedAt = android.os.SystemClock.elapsedRealtime()
         try {
-            val scannedBitmap = resizeBitmap(originalBitmap, 768)
-            val initialImage = bitmapToBase64(scannedBitmap, 68)
+            // Send one clear, reasonably detailed image. Do not wait for multiple
+            // PriceCharting searches or a second image-comparison request.
+            val scannedBitmap = resizeBitmap(originalBitmap, 1024)
+            val initialImage = bitmapToBase64(scannedBitmap, 82)
             val prompt = """
-                Identify the actual video game whose box, cartridge, or disc artwork is shown.
-                Read the MAIN GAME TITLE printed on the packaging. Do not mistake a number,
-                character, object, score, or decoration in the illustration for the game's title.
-                For example, a character holding a dice block showing 3 does NOT mean the game
-                is the third installment. Prefer explicit title text and distinctive packaging.
-                Return the best match first, plus up to two plausible alternatives ONLY if the
-                artwork could reasonably be confused with them. Include the console/platform.
-                Do not invent editions, subtitles, or alternatives.
-                Return JSON only:
-                {"candidates":[{"title":"official game title","platform":"console","confidence":0.0}]}
-                Confidence is 0 to 1. Maximum three candidates.
+                Identify the exact video game shown on this physical game packaging.
+                Your most important task is to READ THE PRINTED GAME TITLE, not guess
+                from the illustration, characters, objects, colors, or franchise.
+
+                TITLE-NUMBER RULE:
+                A number in the artwork is NOT a sequel number. Only include a sequel
+                number in the game title if that number is visibly printed as part of
+                the title/logo itself. For example, if Mario is holding a dice block
+                showing 3 but the printed logo says only "Mario Party", the game is
+                "Mario Party", NOT "Mario Party 3". Do not infer a sequel from a die,
+                score, jersey, item, character count, or other decorative detail.
+
+                Carefully inspect the title logo and any printed subtitle. If the logo
+                has no sequel number, return the original/base title even if the
+                illustration contains numbers. Do not invent a sequel or edition.
+                Identify the platform from the packaging where possible.
+
+                Return JSON only, using exactly these fields:
+                {"title":"exact game title","platform":"console","visible_title_text":"words and numbers visibly printed in the title/logo","title_number_is_printed":false,"confidence":0.0}
+                Set title_number_is_printed to true only when a sequel number is
+                actually visible in the printed title/logo. Confidence is 0 to 1.
             """.trimIndent()
 
-            val firstParts = org.json.JSONArray()
+            val parts = org.json.JSONArray()
                 .put(JSONObject().put("text", prompt))
                 .put(imagePart(initialImage))
-            val firstResponse = callGemini(apiKey, firstParts, 180)
-            val firstJson = extractGeminiJson(firstResponse)
-            val candidateArray = firstJson.optJSONArray("candidates")
-                ?: throw IllegalStateException("Gemini did not return game candidates. Please scan again.")
+            val response = callGemini(apiKey, parts, 220)
+            val result = extractGeminiJson(response)
 
-            val candidates = mutableListOf<CoverCandidate>()
-            for (i in 0 until minOf(candidateArray.length(), 3)) {
-                val item = candidateArray.optJSONObject(i) ?: continue
-                val title = item.optString("title").trim()
-                val platform = item.optString("platform").trim()
-                val confidence = item.optDouble("confidence", 0.0)
-                if (title.isNotBlank()) candidates.add(CoverCandidate(title, platform, confidence))
-            }
-            if (candidates.isEmpty() || candidates.first().confidence < 0.2) {
-                throw IllegalStateException("Couldn't confidently identify that cover. Try a clearer, straight-on photo.")
+            var title = result.optString("title").trim()
+            val platform = result.optString("platform").trim()
+            val visibleTitle = result.optString("visible_title_text").trim()
+            val confidence = result.optDouble("confidence", 0.0)
+
+            if (title.isBlank() || confidence < 0.15) {
+                throw IllegalStateException("Couldn't confidently read the game title. Try a clearer, straight-on photo.")
             }
 
-            // Search PriceCharting for each plausible title and retrieve the catalog cover art.
-            // This is a silent verification step; it does not change the final user search until
-            // the reference images have been compared with the photographed cover.
-            val references = mutableListOf<ReferenceCover>()
-            for (candidate in candidates) {
-                try {
-                    val reference = findPriceChartingReference(candidate)
-                    if (reference != null) references.add(reference)
-                } catch (_: Exception) {
-                    // A failed reference lookup should not prevent an otherwise useful scan.
-                }
-            }
-
-            var selected = candidates.first()
-            var verificationNote = ""
-            if (references.isNotEmpty()) {
-                try {
-                    val compareParts = org.json.JSONArray()
-                    val comparePrompt = StringBuilder()
-                        .append("Compare the photographed game packaging with the catalog reference images. ")
-                        .append("The first image is the user's scan. Each following image is a known PriceCharting ")
-                        .append("product cover with its candidate title written immediately before it. ")
-                        .append("Choose the reference whose actual packaging artwork, title placement, characters, ")
-                        .append("colors, and layout best match the scan. Ignore decorative numbers and incidental objects. ")
-                        .append("Do not choose based only on a similar character or franchise. If none match, return index 0. ")
-                        .append("Return JSON only: {\"bestIndex\":1,\"confidence\":0.0,\"reason\":\"brief reason\"}. ")
-                        .append("bestIndex is 1-based among the reference images; confidence is 0 to 1.")
-                        .toString()
-                    compareParts.put(JSONObject().put("text", comparePrompt))
-                    compareParts.put(imagePart(initialImage))
-                    references.take(3).forEachIndexed { index, reference ->
-                        compareParts.put(JSONObject().put("text",
-                            "REFERENCE " + (index + 1) + ": " + reference.candidate.title +
-                                " (" + reference.candidate.platform + "). PriceCharting catalog cover."))
-                        compareParts.put(imagePart(bitmapToBase64(resizeBitmap(reference.image, 512), 68)))
+            // Safety net for the exact class of mistake reported: if the model
+            // adds a trailing sequel number but says it is not printed in the
+            // title, remove that unsupported suffix before PriceCharting search.
+            var correctedUnsupportedNumber = false
+            if (!result.optBoolean("title_number_is_printed", false) && visibleTitle.isNotBlank()) {
+                val suffix = Regex("""\s+(?i:(\d{1,3}|II|III|IV|V|VI|VII|VIII|IX|X))$""")
+                    .find(title)
+                if (suffix != null) {
+                    val numberToken = suffix.groupValues[1]
+                    if (!visibleTitle.contains(numberToken, ignoreCase = true)) {
+                        title = title.removeRange(suffix.range).trim()
+                        correctedUnsupportedNumber = true
                     }
-                    val compareResponse = callGemini(apiKey, compareParts, 120)
-                    val comparison = extractGeminiJson(compareResponse)
-                    val bestIndex = comparison.optInt("bestIndex", 0)
-                    val compareConfidence = comparison.optDouble("confidence", 0.0)
-                    if (bestIndex in 1..references.size && compareConfidence >= 0.55) {
-                        selected = references[bestIndex - 1].candidate
-                        if (!selected.title.equals(candidates.first().title, ignoreCase = true)) {
-                            verificationNote = " Reference images corrected the initial guess."
-                        } else {
-                            verificationNote = " Cover image verified."
-                        }
-                    } else {
-                        verificationNote = " Reference comparison was inconclusive; using the initial best match."
-                    }
-                } catch (_: Exception) {
-                    verificationNote = " Reference comparison unavailable; using the initial best match."
                 }
-            } else {
-                verificationNote = " No catalog reference images were available; using the initial best match."
             }
 
             val totalSeconds = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
-            val searchText = selected.title
+            val searchText = title
+            val detail = if (correctedUnsupportedNumber) {
+                " Removed a sequel number that was not printed in the title."
+            } else if (platform.isNotBlank()) {
+                " Platform: $platform."
+            } else {
+                ""
+            }
             ContextCompat.getMainExecutor(context).execute {
                 onStatus("Identified in " +
-                    String.format(java.util.Locale.US, "%.1f", totalSeconds) + "s." + verificationNote)
+                    String.format(java.util.Locale.US, "%.1f", totalSeconds) + "s." + detail)
                 onIdentified(searchText)
             }
         } catch (_: java.net.SocketTimeoutException) {
             val elapsed = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0
             ContextCompat.getMainExecutor(context).execute {
-                onStatus("Gemini or cover verification timed out after " +
+                onStatus("Gemini timed out after " +
                     String.format(java.util.Locale.US, "%.0f", elapsed) +
                     "s. Check your connection and try again.")
             }
@@ -839,81 +800,6 @@ private fun identifyGameCover(
             ContextCompat.getMainExecutor(context).execute { onStatus(message) }
         }
     }.start()
-}
-
-private fun findPriceChartingReference(candidate: CoverCandidate): ReferenceCover? {
-    val searchTerms = if (candidate.platform.isNotBlank()) {
-        candidate.title + " " + candidate.platform
-    } else candidate.title
-    val searchUrl = URL("https://www.pricecharting.com/search-products?type=prices&q=" +
-        URLEncoder.encode(searchTerms, "UTF-8"))
-    val connection = (searchUrl.openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 6500
-        readTimeout = 8000
-        instanceFollowRedirects = true
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
-        setRequestProperty("Accept", "text/html,application/xhtml+xml")
-    }
-    val html = try {
-        if (connection.responseCode !in 200..299) return null
-        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-    } finally {
-        connection.disconnect()
-    }
-
-    // PriceCharting search results are product rows containing a /game/ link and cover image.
-    val gameLinkRegex = Regex("""href=["']([^"']*/game/[^"']+)["']""", RegexOption.IGNORE_CASE)
-    for (match in gameLinkRegex.findAll(html).take(8)) {
-        val href = match.groupValues[1]
-        val rowStart = html.lastIndexOf("<tr", match.range.first, ignoreCase = true)
-        val rowEnd = if (rowStart >= 0) html.indexOf("</tr>", match.range.last, ignoreCase = true) else -1
-        val region = if (rowStart >= 0 && rowEnd > rowStart) {
-            html.substring(rowStart, rowEnd + 5)
-        } else {
-            html.substring(
-                (match.range.first - 900).coerceAtLeast(0),
-                (match.range.last + 1100).coerceAtMost(html.length)
-            )
-        }
-        val imageTag = Regex("""<img\b[^>]*(?:src|data-src)=["']([^"']+)["'][^>]*>""",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .find(region) ?: continue
-        var imageUrl = imageTag.groupValues[1]
-        if (imageUrl.startsWith("//")) imageUrl = "https:" + imageUrl
-        if (imageUrl.startsWith("/")) imageUrl = "https://www.pricecharting.com" + imageUrl
-        if (!imageUrl.startsWith("https://")) continue
-
-        val productUrl = if (href.startsWith("http")) href else "https://www.pricecharting.com" + href
-        val imageConnection = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 5000
-            readTimeout = 6500
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
-        }
-        try {
-            if (imageConnection.responseCode !in 200..299) continue
-            val bytes = imageConnection.inputStream.use { input ->
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > 2_500_000) return@use ByteArray(0)
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            }
-            if (bytes.isEmpty()) continue
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
-            return ReferenceCover(candidate, bitmap, productUrl)
-        } finally {
-            imageConnection.disconnect()
-        }
-    }
-    return null
 }
 
 private fun resizeBitmap(source: Bitmap, maxDimension: Int): Bitmap {
