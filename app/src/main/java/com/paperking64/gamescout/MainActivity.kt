@@ -84,6 +84,7 @@ private fun GameScoutScreen() {
     var isScanning by remember { mutableStateOf(false) }
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
     var sampleTestResults by remember { mutableStateOf("") }
+    var hardwareTestResults by remember { mutableStateOf("") }
 
     var currencyAmount by remember { mutableStateOf("1.00") }
     var fromCurrency by remember { mutableStateOf("USD") }
@@ -193,6 +194,68 @@ private fun GameScoutScreen() {
         )
     }
 
+
+    val hardwareCases = listOf(
+        HardwareTestCase("test-images/consoles/nintendo-3ds-01.jpg", "Nintendo 3DS", "Open front", listOf("nintendo 3ds", "3ds")),
+        HardwareTestCase("test-images/consoles/nintendo-3ds-02.jpg", "Nintendo 3DS", "Closed front", listOf("nintendo 3ds", "3ds")),
+        HardwareTestCase("test-images/consoles/nintendo-3ds-03.jpg", "Nintendo 3DS", "Rear", listOf("nintendo 3ds", "3ds")),
+        HardwareTestCase("test-images/consoles/nintendo-3ds-04.jpg", "Nintendo 3DS", "Angled", listOf("nintendo 3ds", "3ds")),
+        HardwareTestCase("test-images/consoles/gba-sp-01.jpg", "Game Boy Advance SP", "Closed", listOf("game boy advance sp", "gba sp")),
+        HardwareTestCase("test-images/consoles/gba-sp-02.jpg", "Game Boy Advance SP", "Open", listOf("game boy advance sp", "gba sp")),
+        HardwareTestCase("test-images/consoles/gba-sp-03.jpg", "Game Boy Advance SP", "Blue variant", listOf("game boy advance sp", "gba sp")),
+        HardwareTestCase("test-images/consoles/gba-sp-04.jpg", "Game Boy Advance SP", "Alternate angle", listOf("game boy advance sp", "gba sp")),
+        HardwareTestCase("test-images/consoles/wii-01.jpg", "Nintendo Wii", "Front", listOf("nintendo wii", "wii")),
+        HardwareTestCase("test-images/consoles/wii-02.jpg", "Nintendo Wii", "Rear", listOf("nintendo wii", "wii")),
+        HardwareTestCase("test-images/consoles/wii-03.jpg", "Nintendo Wii", "Side / ports", listOf("nintendo wii", "wii")),
+        HardwareTestCase("test-images/consoles/wii-04.jpg", "Nintendo Wii", "Alternate view", listOf("nintendo wii", "wii")),
+        HardwareTestCase("test-images/consoles/nes-01.jpg", "Nintendo Entertainment System", "Front", listOf("nintendo entertainment system", "nes")),
+        HardwareTestCase("test-images/consoles/nes-02.jpg", "Nintendo Entertainment System", "Rear", listOf("nintendo entertainment system", "nes")),
+        HardwareTestCase("test-images/consoles/nes-03.jpg", "Nintendo Entertainment System", "Rear-left angle", listOf("nintendo entertainment system", "nes")),
+        HardwareTestCase("test-images/consoles/nes-04.jpg", "Nintendo Entertainment System", "Rear-right angle", listOf("nintendo entertainment system", "nes")),
+        HardwareTestCase("test-images/consoles/ps2-01.jpg", "PlayStation 2", "Fat front", listOf("playstation 2", "ps2")),
+        HardwareTestCase("test-images/consoles/ps2-02.jpg", "PlayStation 2", "Fat rear", listOf("playstation 2", "ps2")),
+        HardwareTestCase("test-images/consoles/ps2-03.jpg", "PlayStation 2", "Fat side", listOf("playstation 2", "ps2")),
+        HardwareTestCase("test-images/consoles/ps2-04.jpg", "PlayStation 2", "Alternate model front", listOf("playstation 2", "ps2"))
+    )
+
+    fun runHardwareTest(index: Int, results: List<String>) {
+        if (index >= hardwareCases.size) {
+            val summary = hardwareCases.map { it.expectedSystem }.distinct().map { system ->
+                val matching = results.filter { it.startsWith("$system|") }
+                val passed = matching.count { it.contains("|PASS|") }
+                "$system: $passed/${matching.size} passed"
+            }
+            hardwareTestResults = (summary + "" + results.map { row ->
+                val parts = row.split("|", limit = 4)
+                if (parts.size == 4) "${parts[0]} · ${parts[1]}: ${parts[2]} · ${parts[3]}" else row
+            }).joinToString("\n")
+            isScanning = false
+            status = "Hardware recognition tests completed."
+            return
+        }
+        val test = hardwareCases[index]
+        status = "Testing ${test.expectedSystem} · ${test.angle} (${index + 1}/${hardwareCases.size})..."
+        val bitmap = loadAssetBitmap(context, test.assetPath)
+        if (bitmap == null) {
+            runHardwareTest(index + 1, results + "${test.expectedSystem}|${test.angle}|FAIL|Test image missing")
+            return
+        }
+        identifyConsoleHardware(
+            context, bitmap, apiKey,
+            onIdentified = { actual ->
+                val normalized = normalizeForTest(actual)
+                val passed = test.expectedAliases.any { alias -> normalized.contains(normalizeForTest(alias)) }
+                runHardwareTest(
+                    index + 1,
+                    results + "${test.expectedSystem}|${test.angle}|${if (passed) "PASS" else "FAIL"}|$actual"
+                )
+            },
+            onStatus = { error ->
+                runHardwareTest(index + 1, results + "${test.expectedSystem}|${test.angle}|ERROR|$error")
+            }
+        )
+    }
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Color(0xFFB388FF),
@@ -280,6 +343,32 @@ private fun GameScoutScreen() {
                     if (sampleTestResults.isNotBlank()) {
                         Text(
                             sampleTestResults,
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            if (apiKey.isBlank()) {
+                                status = "Add your Gemini API key in Settings before running hardware tests."
+                            } else {
+                                hardwareTestResults = ""
+                                isScanning = true
+                                status = "Preparing 20 console recognition tests..."
+                                runHardwareTest(0, emptyList())
+                            }
+                        },
+                        enabled = !isScanning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Test 20 console photos")
+                    }
+                    if (hardwareTestResults.isNotBlank()) {
+                        Text(
+                            hardwareTestResults,
                             color = Color.LightGray,
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.fillMaxWidth()
@@ -714,6 +803,68 @@ private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
     } catch (_: Exception) {
         null
     }
+}
+
+
+private data class HardwareTestCase(
+    val assetPath: String,
+    val expectedSystem: String,
+    val angle: String,
+    val expectedAliases: List<String>
+)
+
+private fun identifyConsoleHardware(
+    context: Context,
+    originalBitmap: Bitmap,
+    apiKey: String,
+    onIdentified: (String) -> Unit,
+    onStatus: (String) -> Unit
+) {
+    Thread {
+        try {
+            val image = bitmapToBase64(resizeBitmap(originalBitmap, 1024), 82)
+            val prompt = """
+                Identify the physical video game console or handheld shown in this photograph.
+                This is a hardware-recognition task, NOT a game-cover or text-reading task.
+                Identify it primarily from its physical shape, proportions, colors, button and
+                control layout, screen arrangement, hinges, ports, vents, disc slot, and other
+                visible hardware features. Do not require a visible logo or readable model text.
+                The photo may show the device from the front, back, side, top, bottom, open,
+                closed, or an oblique angle. If details are insufficient, identify only the
+                broadest family you can support and lower confidence. Never guess a more
+                specific revision than the image supports.
+
+                Return JSON only:
+                {"manufacturer":"...","family":"...","model":"...","color":"...","form_factor":"...","visible_features":"...","confidence":0.0}
+            """.trimIndent()
+            val parts = org.json.JSONArray()
+                .put(JSONObject().put("text", prompt))
+                .put(imagePart(image))
+            val response = callGemini(apiKey, parts, 240)
+            val result = extractGeminiJson(response)
+            val manufacturer = result.optString("manufacturer").trim()
+            val family = result.optString("family").trim()
+            val model = result.optString("model").trim()
+            val color = result.optString("color").trim()
+            val features = result.optString("visible_features").trim()
+            val confidence = result.optDouble("confidence", 0.0)
+            if (family.isBlank() || confidence < 0.15) {
+                throw IllegalStateException("Couldn't confidently identify this hardware. Try another angle.")
+            }
+            val actual = listOf(manufacturer, family, model, color)
+                .filter { it.isNotBlank() }.distinct().joinToString(" ") +
+                " (confidence ${(confidence * 100).toInt()}%)" +
+                if (features.isNotBlank()) " · $features" else ""
+            ContextCompat.getMainExecutor(context).execute { onIdentified(actual) }
+        } catch (_: java.net.SocketTimeoutException) {
+            ContextCompat.getMainExecutor(context).execute {
+                onStatus("Gemini timed out. Check the connection and retry.")
+            }
+        } catch (exception: Exception) {
+            val message = exception.message ?: "Hardware recognition failed."
+            ContextCompat.getMainExecutor(context).execute { onStatus(message) }
+        }
+    }.start()
 }
 
 private fun identifyGameCover(
