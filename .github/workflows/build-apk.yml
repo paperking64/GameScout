@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -18,6 +18,42 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Download recognition test images
+        run: |
+          mkdir -p app/src/main/assets/test-images
+          curl -fL --retry 3 -A "GameScout test fixtures" "https://www.mariowiki.com/images/7/7d/SSBM_Box_CAN.jpg" -o app/src/main/assets/test-images/ssbm-melee.jpg
+          curl -fL --retry 3 -A "GameScout test fixtures" "https://www.mariowiki.com/images/2/2c/SM64NACartridge.jpg" -o app/src/main/assets/test-images/super-mario-64.jpg
+          curl -fL --retry 3 -A "GameScout test fixtures" "https://pokemondungeon.com/wp-content/uploads/2026/09/3624.jpg" -o app/src/main/assets/test-images/pokemon-red.jpg
+          cat > app/src/main/assets/test-images/SOURCES.txt <<'EOF'
+          GameScout recognition test fixtures
+
+          ssbm-melee.jpg
+          Source: Super Mario Wiki, Canadian Super Smash Bros. Melee box art.
+          https://www.mariowiki.com/File:SSBM_Box_CAN.jpg
+          Copyright Nintendo. Included only as a private test fixture for game-cover recognition.
+
+          super-mario-64.jpg
+          Source: Super Mario Wiki, North American Super Mario 64 cartridge photo (credited there to MobyGames).
+          https://www.mariowiki.com/File:SM64NACartridge.jpg
+          Copyright Nintendo. Included only as a private test fixture for game-cover recognition.
+
+          pokemon-red.jpg
+          Source: Pokemon Dungeon, North American Pokemon Red cartridge scan.
+          https://pokemondungeon.com/pokemon-red-box-art/
+          Copyright Nintendo / The Pokemon Company. Included only as a private test fixture for game-cover recognition.
+          EOF
+          file app/src/main/assets/test-images/*
+      - name: Save downloaded test images to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/test-images
+          if ! git diff --cached --quiet; then
+            git commit -m "Add game recognition test images [skip ci]"
+            git push origin HEAD:main
+          fi
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
