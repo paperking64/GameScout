@@ -85,6 +85,7 @@ private fun GameScoutScreen() {
     var sheetOpen by remember { mutableStateOf(false) }
     var isScanning by remember { mutableStateOf(false) }
     var pageUrl by remember { mutableStateOf("https://www.pricecharting.com/") }
+    var sampleTestResults by remember { mutableStateOf("") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -139,6 +140,37 @@ private fun GameScoutScreen() {
                 }
             }
         }
+    }
+
+    val sampleCases = listOf(
+        "test-images/ssbm-melee.jpg" to "Super Smash Bros. Melee",
+        "test-images/super-mario-64.jpg" to "Super Mario 64",
+        "test-images/pokemon-red.jpg" to "Pokemon Red"
+    )
+
+    fun runSampleTest(index: Int, results: List<String>) {
+        if (index >= sampleCases.size) {
+            sampleTestResults = results.joinToString("\n")
+            isScanning = false
+            status = "Sample recognition tests completed."
+            return
+        }
+        val (assetPath, expectedTitle) = sampleCases[index]
+        val bitmap = loadAssetBitmap(context, assetPath)
+        if (bitmap == null) {
+            runSampleTest(index + 1, results + "$expectedTitle: TEST IMAGE MISSING")
+            return
+        }
+        identifyGameCover(
+            context, bitmap, apiKey,
+            onIdentified = { actual ->
+                val passed = actual.contains(expectedTitle, ignoreCase = true)
+                runSampleTest(index + 1, results + "$expectedTitle: ${if (passed) "PASS" else "CHECK"} - $actual")
+            },
+            onStatus = { error ->
+                runSampleTest(index + 1, results + "$expectedTitle: ERROR - $error")
+            }
+        )
     }
 
     MaterialTheme(
@@ -208,6 +240,31 @@ private fun GameScoutScreen() {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Upload cover image")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            if (apiKey.isBlank()) {
+                                status = "Add your Gemini API key in Settings before running sample tests."
+                            } else {
+                                sampleTestResults = ""
+                                isScanning = true
+                                status = "Testing three sample game images..."
+                                runSampleTest(0, emptyList())
+                            }
+                        },
+                        enabled = !isScanning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Test sample images")
+                    }
+                    if (sampleTestResults.isNotBlank()) {
+                        Text(
+                            sampleTestResults,
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 } else {
                     Box(
@@ -479,7 +536,7 @@ private fun CameraScanner(
                         ContextCompat.getMainExecutor(context),
                         object : ImageCapture.OnImageSavedCallback {
                             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath)
+                                val bitmap = decodeSampledBitmap(photoFile.absolutePath, 1400)
                                 if (bitmap == null) {
                                     onScanningChanged(false)
                                     onStatus("Could not read the captured photo.")
@@ -565,6 +622,31 @@ private fun CameraScanner(
 }
 
 
+private fun decodeSampledBitmap(path: String, maxDimension: Int): Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > maxDimension) sampleSize *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 }
+        BitmapFactory.decodeFile(path, options)
+    } catch (_: Exception) { null }
+}
+
+private fun loadAssetBitmap(context: Context, assetPath: String): Bitmap? {
+    return try {
+        val bytes = context.assets.open(assetPath).use { it.readBytes() }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > 1400) sampleSize *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    } catch (_: Exception) { null }
+}
+
 private fun loadImageBitmap(context: Context, uri: Uri): Bitmap? {
     return try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -597,7 +679,7 @@ private fun identifyGameCover(
     Thread {
         var connection: HttpURLConnection? = null
         try {
-            val maxDimension = 1280
+            val maxDimension = 960
             val scale = minOf(
                 1.0,
                 maxDimension.toDouble() / maxOf(originalBitmap.width, originalBitmap.height)
@@ -612,7 +694,7 @@ private fun identifyGameCover(
             } else originalBitmap
 
             val imageOutput = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, imageOutput)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 72, imageOutput)
             val imageBase64 = Base64.encodeToString(imageOutput.toByteArray(), Base64.NO_WRAP)
 
             val prompt = """
@@ -641,15 +723,16 @@ private fun identifyGameCover(
                 .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
                 .put("generationConfig", JSONObject()
                     .put("responseMimeType", "application/json")
-                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "low")) )
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
+                    .put("maxOutputTokens", 128))
 
             val endpoint = URL(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
             )
             connection = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 20000
-                readTimeout = 45000
+                connectTimeout = 10000
+                readTimeout = 15000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("x-goog-api-key", apiKey)
