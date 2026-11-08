@@ -173,3 +173,19 @@ jobs:
           name: GameScout-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+      - name: Publish APK as a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          apk="GameScout-$version.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$apk"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            gh release upload "v$version" "$apk" --clobber
+          else
+            gh release create "v$version" "$apk" \
+              --title "GameScout $version" \
+              --target "$GITHUB_SHA" \
+              --latest \
+              --notes "Download $apk below and open it on your phone to install. Built from commit ${GITHUB_SHA:0:7}."
+          fi
